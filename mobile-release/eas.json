@@ -1,0 +1,31 @@
+{
+  "cli": {
+    "version": ">= 10.0.0"
+  },
+  "build": {
+    "preview": {
+      "distribution": "internal",
+      "channel": "preview",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://api.example.com",
+        "APP_IOS_BUNDLE_IDENTIFIER": "com.yourcompany.weeklytaxapp.preview",
+        "APP_ANDROID_PACKAGE": "com.yourcompany.weeklytaxapp.preview"
+      }
+    },
+    "production": {
+      "channel": "production",
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://api.example.com",
+        "APP_IOS_BUNDLE_IDENTIFIER": "com.yourcompany.weeklytaxapp",
+        "APP_ANDROID_PACKAGE": "com.yourcompany.weeklytaxapp"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}

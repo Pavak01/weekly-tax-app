@@ -1,0 +1,71 @@
+name: Mobile Release Validate
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_build:
+        description: Run EAS build after validation (requires EXPO_TOKEN)
+        required: true
+        default: "false"
+      build_profile:
+        description: Build profile to use when run_build is true
+        required: true
+        default: preview
+      platform:
+        description: Platform to build when run_build is true
+        required: true
+        default: all
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: mobile-release/package-lock.json
+
+      - name: Install mobile-release dependencies
+        working-directory: mobile-release
+        run: npm ci
+
+      - name: Validate preview profile
+        working-directory: mobile-release
+        env:
+          EXPO_PUBLIC_API_BASE_URL: ${{ secrets.RAILWAY_PREVIEW_API_URL }}
+          APP_IOS_BUNDLE_IDENTIFIER: ${{ secrets.IOS_BUNDLE_ID_PREVIEW }}
+          APP_ANDROID_PACKAGE: ${{ secrets.ANDROID_PACKAGE_PREVIEW }}
+        run: npm run validate:release:preview
+
+      - name: Validate production profile
+        working-directory: mobile-release
+        env:
+          EXPO_PUBLIC_API_BASE_URL: ${{ secrets.RAILWAY_PRODUCTION_API_URL }}
+          APP_IOS_BUNDLE_IDENTIFIER: ${{ secrets.IOS_BUNDLE_ID_PRODUCTION }}
+          APP_ANDROID_PACKAGE: ${{ secrets.ANDROID_PACKAGE_PRODUCTION }}
+        run: npm run validate:release:production
+
+      - name: Setup EAS CLI
+        if: ${{ github.event.inputs.run_build == 'true' }}
+        working-directory: mobile-release
+        run: npm install -g eas-cli
+
+      - name: Run EAS build
+        if: ${{ github.event.inputs.run_build == 'true' }}
+        working-directory: mobile-release
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EXPO_PUBLIC_API_BASE_URL: ${{ github.event.inputs.build_profile == 'preview' && secrets.RAILWAY_PREVIEW_API_URL || secrets.RAILWAY_PRODUCTION_API_URL }}
+          APP_IOS_BUNDLE_IDENTIFIER: ${{ github.event.inputs.build_profile == 'preview' && secrets.IOS_BUNDLE_ID_PREVIEW || secrets.IOS_BUNDLE_ID_PRODUCTION }}
+          APP_ANDROID_PACKAGE: ${{ github.event.inputs.build_profile == 'preview' && secrets.ANDROID_PACKAGE_PREVIEW || secrets.ANDROID_PACKAGE_PRODUCTION }}
+        run: |
+          if [ "${{ github.event.inputs.platform }}" = "all" ]; then
+            eas build --non-interactive --platform all --profile "${{ github.event.inputs.build_profile }}"
+          else
+            eas build --non-interactive --platform "${{ github.event.inputs.platform }}" --profile "${{ github.event.inputs.build_profile }}"
+          fi

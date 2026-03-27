@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "Weekly Tax App Release",
+    "slug": "weekly-tax-app-release",
+    "description": "Compliance-focused weekly tax tracking for self-employed vehicle movement drivers.",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#f5ede1",
+    "scheme": "weeklytaxapp",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "fallbackToCacheTimeout": 0
+    },
+    "ios": {
+      "bundleIdentifier": "com.weeklytaxapp.mobile",
+      "buildNumber": "1",
+      "supportsTablet": false,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "com.weeklytaxapp.mobile",
+      "versionCode": 1,
+      "permissions": [],
+      "adaptiveIcon": {
+        "backgroundColor": "#f5ede1"
+      }
+    },
+    "extra": {
+      "apiBaseUrl": "https://api.example.com"
+    },
+    "plugins": [
+      "expo-asset",
+      "expo-document-picker"
+    ],
+    "experiments": {
+      "typedRoutes": false
+    }
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "name": "weekly-tax-mobile-release",
+  "version": "1.0.0",
+  "private": true,
+  "main": "node_modules/expo/AppEntry.js",
+  "scripts": {
+    "start": "expo start",
+    "dev": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "validate:release:preview": "node ./scripts/validate-release-config.js preview",
+    "validate:release:production": "node ./scripts/validate-release-config.js production",
+    "build:android:preview": "npm run validate:release:preview && eas build --platform android --profile preview",
+    "build:android:production": "npm run validate:release:production && eas build --platform android --profile production",
+    "build:ios:preview": "npm run validate:release:preview && eas build --platform ios --profile preview",
+    "build:ios:production": "npm run validate:release:production && eas build --platform ios --profile production"
+  },
+  "dependencies": {
+    "@expo/metro-runtime": "~4.0.1",
+    "@react-native-async-storage/async-storage": "1.23.1",
+    "expo": "^52.0.20",
+    "expo-asset": "~11.0.5",
+    "expo-constants": "~17.0.3",
+    "expo-document-picker": "~13.0.3",
+    "expo-file-system": "~18.0.12",
+    "expo-sharing": "~13.0.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "react-native": "0.76.9",
+    "react-native-web": "~0.19.13"
+  },
+  "devDependencies": {
+    "@types/react": "~18.3.12",
+    "babel-preset-expo": "^12.0.0",
+    "typescript": "^5.7.2"
+  }
+}
