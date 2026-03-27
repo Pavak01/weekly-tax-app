@@ -3,6 +3,10 @@ name: Mobile Release Validate
 on:
   workflow_dispatch:
     inputs:
+      validate_target:
+        description: Which config to validate
+        required: true
+        default: preview
       run_build:
         description: Run EAS build after validation (requires EXPO_TOKEN)
         required: true
@@ -34,7 +38,73 @@ jobs:
         working-directory: mobile-release
         run: npm ci
 
+      - name: Preflight secret checks
+        env:
+          VALIDATE_TARGET: ${{ github.event.inputs.validate_target }}
+          RAILWAY_PREVIEW_API_URL: ${{ secrets.RAILWAY_PREVIEW_API_URL }}
+          IOS_BUNDLE_ID_PREVIEW: ${{ secrets.IOS_BUNDLE_ID_PREVIEW }}
+          ANDROID_PACKAGE_PREVIEW: ${{ secrets.ANDROID_PACKAGE_PREVIEW }}
+          RAILWAY_PRODUCTION_API_URL: ${{ secrets.RAILWAY_PRODUCTION_API_URL }}
+          IOS_BUNDLE_ID_PRODUCTION: ${{ secrets.IOS_BUNDLE_ID_PRODUCTION }}
+          ANDROID_PACKAGE_PRODUCTION: ${{ secrets.ANDROID_PACKAGE_PRODUCTION }}
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          RUN_BUILD: ${{ github.event.inputs.run_build }}
+        run: |
+          set -euo pipefail
+
+          check_not_empty () {
+            local name="$1"
+            local value="$2"
+            if [ -z "$value" ]; then
+              echo "Missing required GitHub secret: $name"
+              exit 1
+            fi
+          }
+
+          check_not_placeholder_url () {
+            local name="$1"
+            local value="$2"
+            if echo "$value" | grep -Eiq 'example\\.com|localhost|127\\.0\\.0\\.1'; then
+              echo "Secret $name is still a placeholder URL: $value"
+              exit 1
+            fi
+          }
+
+          check_not_placeholder_id () {
+            local name="$1"
+            local value="$2"
+            if [ "$value" = "com.weeklytaxapp.mobile" ] || echo "$value" | grep -Eiq '^com\\.yourcompany\\.'; then
+              echo "Secret $name is still a placeholder identifier: $value"
+              exit 1
+            fi
+          }
+
+          if [ "$VALIDATE_TARGET" = "preview" ] || [ "$VALIDATE_TARGET" = "both" ]; then
+            check_not_empty "RAILWAY_PREVIEW_API_URL" "$RAILWAY_PREVIEW_API_URL"
+            check_not_empty "IOS_BUNDLE_ID_PREVIEW" "$IOS_BUNDLE_ID_PREVIEW"
+            check_not_empty "ANDROID_PACKAGE_PREVIEW" "$ANDROID_PACKAGE_PREVIEW"
+            check_not_placeholder_url "RAILWAY_PREVIEW_API_URL" "$RAILWAY_PREVIEW_API_URL"
+            check_not_placeholder_id "IOS_BUNDLE_ID_PREVIEW" "$IOS_BUNDLE_ID_PREVIEW"
+            check_not_placeholder_id "ANDROID_PACKAGE_PREVIEW" "$ANDROID_PACKAGE_PREVIEW"
+          fi
+
+          if [ "$VALIDATE_TARGET" = "production" ] || [ "$VALIDATE_TARGET" = "both" ]; then
+            check_not_empty "RAILWAY_PRODUCTION_API_URL" "$RAILWAY_PRODUCTION_API_URL"
+            check_not_empty "IOS_BUNDLE_ID_PRODUCTION" "$IOS_BUNDLE_ID_PRODUCTION"
+            check_not_empty "ANDROID_PACKAGE_PRODUCTION" "$ANDROID_PACKAGE_PRODUCTION"
+            check_not_placeholder_url "RAILWAY_PRODUCTION_API_URL" "$RAILWAY_PRODUCTION_API_URL"
+            check_not_placeholder_id "IOS_BUNDLE_ID_PRODUCTION" "$IOS_BUNDLE_ID_PRODUCTION"
+            check_not_placeholder_id "ANDROID_PACKAGE_PRODUCTION" "$ANDROID_PACKAGE_PRODUCTION"
+          fi
+
+          if [ "$RUN_BUILD" = "true" ]; then
+            check_not_empty "EXPO_TOKEN" "$EXPO_TOKEN"
+          fi
+
+          echo "Preflight secret checks passed for target: $VALIDATE_TARGET"
+
       - name: Validate preview profile
+        if: ${{ github.event.inputs.validate_target == 'preview' || github.event.inputs.validate_target == 'both' }}
         working-directory: mobile-release
         env:
           EXPO_PUBLIC_API_BASE_URL: ${{ secrets.RAILWAY_PREVIEW_API_URL }}
@@ -43,6 +113,7 @@ jobs:
         run: npm run validate:release:preview
 
       - name: Validate production profile
+        if: ${{ github.event.inputs.validate_target == 'production' || github.event.inputs.validate_target == 'both' }}
         working-directory: mobile-release
         env:
           EXPO_PUBLIC_API_BASE_URL: ${{ secrets.RAILWAY_PRODUCTION_API_URL }}
