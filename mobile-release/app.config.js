@@ -5,14 +5,14 @@ module.exports = ({ config }) => ({
     bundleIdentifier:
       process.env.APP_IOS_BUNDLE_IDENTIFIER ||
       config.ios?.bundleIdentifier ||
-      "com.weeklytaxapp.mobile"
+      "com.pavak01.weeklytaxapp"
   },
   android: {
     ...(config.android || {}),
     package:
       process.env.APP_ANDROID_PACKAGE ||
       config.android?.package ||
-      "com.weeklytaxapp.mobile"
+      "com.pavak01.weeklytaxapp"
   },
   extra: {
     ...(config.extra || {}),
