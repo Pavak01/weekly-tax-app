@@ -51,6 +51,7 @@ jobs:
           IOS_BUNDLE_ID_PRODUCTION: ${{ secrets.IOS_BUNDLE_ID_PRODUCTION }}
           ANDROID_PACKAGE_PRODUCTION: ${{ secrets.ANDROID_PACKAGE_PRODUCTION }}
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EXPO_PROJECT_ID: ${{ secrets.EXPO_PROJECT_ID }}
           RUN_BUILD: ${{ github.event.inputs.run_build }}
         run: |
           set -euo pipefail
@@ -102,6 +103,7 @@ jobs:
 
           if [ "$RUN_BUILD" = "true" ]; then
             check_not_empty "EXPO_TOKEN" "$EXPO_TOKEN"
+            check_not_empty "EXPO_PROJECT_ID" "$EXPO_PROJECT_ID"
           fi
 
           echo "Preflight secret checks passed for target: $VALIDATE_TARGET"
@@ -134,6 +136,7 @@ jobs:
         working-directory: mobile-release
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EXPO_PROJECT_ID: ${{ secrets.EXPO_PROJECT_ID }}
           EXPO_PUBLIC_API_BASE_URL: ${{ github.event.inputs.build_profile == 'preview' && secrets.RAILWAY_PREVIEW_API_URL || secrets.RAILWAY_PRODUCTION_API_URL }}
           APP_IOS_BUNDLE_IDENTIFIER: ${{ github.event.inputs.build_profile == 'preview' && secrets.IOS_BUNDLE_ID_PREVIEW || secrets.IOS_BUNDLE_ID_PRODUCTION }}
           APP_ANDROID_PACKAGE: ${{ github.event.inputs.build_profile == 'preview' && secrets.ANDROID_PACKAGE_PREVIEW || secrets.ANDROID_PACKAGE_PRODUCTION }}

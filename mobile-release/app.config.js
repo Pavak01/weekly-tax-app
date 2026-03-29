@@ -16,6 +16,10 @@ module.exports = ({ config }) => ({
   },
   extra: {
     ...(config.extra || {}),
+    eas: {
+      ...(config.extra?.eas || {}),
+      ...(process.env.EXPO_PROJECT_ID ? { projectId: process.env.EXPO_PROJECT_ID } : {})
+    },
     apiBaseUrl: process.env.EXPO_PUBLIC_API_BASE_URL || "http://localhost:4000"
   }
 });

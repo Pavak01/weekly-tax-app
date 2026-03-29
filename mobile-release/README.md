@@ -81,6 +81,7 @@ Add these GitHub repository secrets:
 - `IOS_BUNDLE_ID_PRODUCTION`
 - `ANDROID_PACKAGE_PREVIEW`
 - `ANDROID_PACKAGE_PRODUCTION`
+- `EXPO_PROJECT_ID` (required for CI EAS builds)
 - `EXPO_TOKEN` (required only when running EAS build in the workflow)
 
 Then run the workflow manually from the Actions tab:
