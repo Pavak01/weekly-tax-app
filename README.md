@@ -43,6 +43,31 @@ Set `API_BASE_URL` in `mobile/App.tsx` for device testing (for physical phones, 
 Release build commands in `mobile-release` now run a validation step before EAS builds. Preview builds allow default identifiers with warnings; production builds require real identifiers and a non-placeholder HTTPS API URL.
 If you use EAS cloud builds, replace the placeholder env values in [mobile-release/eas.json](mobile-release/eas.json) as well.
 
+## Mobile Release Validate (GitHub Actions)
+
+The [Mobile Release Validate](.github/workflows/mobile-release-validate.yml) workflow validates release configuration secrets before an optional EAS build.
+
+### Required GitHub Secrets
+
+Set the following secrets in **Settings → Secrets and variables → Actions** before running the workflow:
+
+| Secret | Description |
+|---|---|
+| `RAILWAY_PREVIEW_API_URL` | HTTPS URL of the preview Railway deployment |
+| `IOS_BUNDLE_ID_PREVIEW` | iOS bundle identifier for the preview build (e.g. `com.yourcompany.weeklytaxapp.preview`) |
+| `ANDROID_PACKAGE_PREVIEW` | Android package name for the preview build (e.g. `com.yourcompany.weeklytaxapp.preview`) |
+| `RAILWAY_PRODUCTION_API_URL` | HTTPS URL of the production Railway deployment |
+| `IOS_BUNDLE_ID_PRODUCTION` | iOS bundle identifier for the production build (e.g. `com.yourcompany.weeklytaxapp`) |
+| `ANDROID_PACKAGE_PRODUCTION` | Android package name for the production build (e.g. `com.yourcompany.weeklytaxapp`) |
+| `EXPO_TOKEN` | Expo access token — only required when `run_build` is `true` |
+
+### Running the workflow
+
+Once the relevant secrets are set, go to **Actions → Mobile Release Validate → Run workflow** and select:
+
+- **validate_target**: `preview` *(or `production` / `both`)*
+- **run_build**: unchecked / `false` *(check only if you want to trigger an EAS cloud build)*
+
 ## Implemented MVP Scope
 
 - Weekly input only

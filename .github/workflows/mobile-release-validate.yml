@@ -7,18 +7,33 @@ on:
         description: Which config to validate
         required: true
         default: preview
+        type: choice
+        options:
+          - preview
+          - production
+          - both
       run_build:
         description: Run EAS build after validation (requires EXPO_TOKEN)
         required: true
         default: "false"
+        type: boolean
       build_profile:
         description: Build profile to use when run_build is true
         required: true
         default: preview
+        type: choice
+        options:
+          - preview
+          - production
       platform:
         description: Platform to build when run_build is true
         required: true
         default: all
+        type: choice
+        options:
+          - all
+          - ios
+          - android
 
 jobs:
   validate:
