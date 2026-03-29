@@ -31,7 +31,10 @@
       }
     },
     "extra": {
-      "apiBaseUrl": "https://api.example.com"
+      "apiBaseUrl": "http://localhost:4000",
+      "eas": {
+        "projectId": "bc53ec71-b7cf-409a-a964-45fde4b5de75"
+      }
     },
     "plugins": [
       "expo-asset",
@@ -39,6 +42,7 @@
     ],
     "experiments": {
       "typedRoutes": false
-    }
+    },
+    "owner": "pavak01"
   }
 }
