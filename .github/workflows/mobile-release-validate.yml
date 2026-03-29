@@ -21,7 +21,7 @@ on:
       platform:
         description: Platform to build when run_build is true
         required: true
-        default: all
+        default: android
 
 jobs:
   validate:

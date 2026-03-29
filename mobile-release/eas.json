@@ -1,11 +1,11 @@
 {
   "cli": {
-    "version": ">= 10.0.0"
+    "version": ">= 10.0.0",
+    "appVersionSource": "remote"
   },
   "build": {
     "preview": {
       "distribution": "internal",
-      "channel": "preview",
       "android": {
         "buildType": "apk"
       },
@@ -16,7 +16,6 @@
       }
     },
     "production": {
-      "channel": "production",
       "autoIncrement": true,
       "env": {
         "EXPO_PUBLIC_API_BASE_URL": "https://api.example.com",

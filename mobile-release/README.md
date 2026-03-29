@@ -89,3 +89,7 @@ Then run the workflow manually from the Actions tab:
 1. Open **Mobile Release Validate**.
 2. Click **Run workflow**.
 3. Keep `run_build=false` to validate only, or set `run_build=true` to trigger EAS build.
+
+CI default recommendation:
+
+- Use `platform=android` first. iOS internal distribution can fail in non-interactive CI if Apple credentials/provisioning are not fully configured yet.
