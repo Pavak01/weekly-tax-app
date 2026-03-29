@@ -31,7 +31,7 @@
       }
     },
     "extra": {
-      "apiBaseUrl": "https://api.example.com"
+      "apiBaseUrl": "https://weekly-tax-app.up.railway.app"
     },
     "plugins": [
       "expo-asset",
