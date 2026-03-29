@@ -73,15 +73,19 @@ Workflow file:
 
 - `.github/workflows/mobile-release-validate.yml`
 
-Add these GitHub repository secrets:
+Add these GitHub repository secrets (Settings → Secrets and variables → Actions → New repository secret):
 
-- `RAILWAY_PREVIEW_API_URL`
-- `RAILWAY_PRODUCTION_API_URL`
-- `IOS_BUNDLE_ID_PREVIEW`
-- `IOS_BUNDLE_ID_PRODUCTION`
-- `ANDROID_PACKAGE_PREVIEW`
-- `ANDROID_PACKAGE_PRODUCTION`
-- `EXPO_TOKEN` (required only when running EAS build in the workflow)
+| Secret | Value |
+|---|---|
+| `RAILWAY_PREVIEW_API_URL` | Your Railway preview deployment HTTPS URL |
+| `RAILWAY_PRODUCTION_API_URL` | Your Railway production deployment HTTPS URL |
+| `IOS_BUNDLE_ID_PREVIEW` | `com.pavak01.weeklytaxapp.preview` |
+| `IOS_BUNDLE_ID_PRODUCTION` | `com.pavak01.weeklytaxapp` |
+| `ANDROID_PACKAGE_PREVIEW` | `com.pavak01.weeklytaxapp.preview` |
+| `ANDROID_PACKAGE_PRODUCTION` | `com.pavak01.weeklytaxapp` |
+| `EXPO_TOKEN` | Your Expo access token (required only when `run_build=true`) |
+
+> **Note:** Do not add these values to `eas.json` or any committed file. They must be stored only as GitHub Actions secrets so that real package identifiers and API URLs are never exposed in source code.
 
 Then run the workflow manually from the Actions tab:
 
