@@ -82,6 +82,7 @@ Add these GitHub repository secrets:
 - `ANDROID_PACKAGE_PREVIEW`
 - `ANDROID_PACKAGE_PRODUCTION`
 - `EXPO_TOKEN` (required only when running EAS build in the workflow)
+- `EXPO_PROJECT_ID` (required only when running EAS build in the workflow; obtain by running `npx eas init` locally in `mobile-release/`)
 
 Then run the workflow manually from the Actions tab:
 
