@@ -131,6 +131,28 @@ jobs:
         working-directory: mobile-release
         run: npm install -g eas-cli
 
+      - name: Configure EAS project
+        if: ${{ github.event.inputs.run_build == 'true' }}
+        working-directory: mobile-release
+        env:
+          EXPO_PROJECT_ID: ${{ secrets.EXPO_PROJECT_ID }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            try {
+              const appJson = JSON.parse(fs.readFileSync('app.json', 'utf8'));
+              if (!appJson.expo) { console.error('app.json is missing the expo field'); process.exit(1); }
+              if (!appJson.expo.extra) appJson.expo.extra = {};
+              if (!appJson.expo.extra.eas) appJson.expo.extra.eas = {};
+              appJson.expo.extra.eas.projectId = process.env.EXPO_PROJECT_ID;
+              fs.writeFileSync('app.json', JSON.stringify(appJson, null, 2) + '\n');
+              console.log('EAS project ID configured in app.json');
+            } catch (err) {
+              console.error('Failed to configure EAS project ID:', err.message);
+              process.exit(1);
+            }
+          "
+
       - name: Run EAS build
         if: ${{ github.event.inputs.run_build == 'true' }}
         working-directory: mobile-release

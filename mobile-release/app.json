@@ -15,7 +15,7 @@
       "fallbackToCacheTimeout": 0
     },
     "ios": {
-      "bundleIdentifier": "com.weeklytaxapp.mobile",
+      "bundleIdentifier": "com.aplc.weeklytaxapp",
       "buildNumber": "1",
       "supportsTablet": false,
       "infoPlist": {
@@ -23,7 +23,7 @@
       }
     },
     "android": {
-      "package": "com.weeklytaxapp.mobile",
+      "package": "com.aplc.weeklytaxapp",
       "versionCode": 1,
       "permissions": [],
       "adaptiveIcon": {
@@ -38,7 +38,17 @@
     },
     "plugins": [
       "expo-asset",
-      "expo-document-picker"
+      "expo-document-picker",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "compileSdkVersion": 35,
+            "targetSdkVersion": 35,
+            "buildToolsVersion": "35.0.0"
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": false

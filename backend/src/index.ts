@@ -33,6 +33,8 @@ const currentDir = path.dirname(currentFilePath);
 const uploadsDir = path.resolve(currentDir, "..", "uploads");
 const maxReceiptSizeBytes = 8 * 1024 * 1024;
 const receiptDownloadTtlSeconds = 15 * 60;
+const passwordResetTtlMinutes = Math.max(5, Number(process.env.PASSWORD_RESET_TTL_MINUTES || 15));
+const allowPasswordResetCodePreview = process.env.NODE_ENV !== "production";
 const allowedReceiptMimeTypes = new Set([
   "application/pdf",
   "image/jpeg",
@@ -78,12 +80,23 @@ const expenseSchema = z.object({
 const weeklyEntrySchema = z.object({
   week_start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   income_total: z.number().min(0),
+  company_providing_services_for: z.string().max(200).nullable().optional(),
   expenses: z.array(expenseSchema).default([])
 });
 
 const authSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8).max(128)
+});
+
+const passwordResetRequestSchema = z.object({
+  email: z.string().email()
+});
+
+const passwordResetConfirmSchema = z.object({
+  email: z.string().email(),
+  code: z.string().trim().regex(/^\d{6}$/),
+  new_password: z.string().min(8).max(128)
 });
 
 const receiptUploadSchema = z.object({
@@ -122,6 +135,14 @@ function signReceiptDownloadToken(userId: string, receiptId: string): string {
 function getReceiptDownloadUrl(req: Request, userId: string, receiptId: string): string {
   const token = signReceiptDownloadToken(userId, receiptId);
   return `${req.protocol}://${req.get("host")}/receipts/${receiptId}/download?token=${encodeURIComponent(token)}`;
+}
+
+function generatePasswordResetCode(): string {
+  return crypto.randomInt(100000, 1000000).toString();
+}
+
+function hashPasswordResetCode(email: string, code: string): string {
+  return crypto.createHash("sha256").update(`${email}:${code}:${jwtSecret}`).digest("hex");
 }
 
 function requireAuth(req: Request, res: Response, next: NextFunction): void {
@@ -250,6 +271,86 @@ app.post("/auth/login", async (req: Request, res: Response) => {
   }
 });
 
+app.post("/auth/forgot-password", async (req: Request, res: Response) => {
+  const parsed = passwordResetRequestSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid payload", details: parsed.error.flatten() });
+  }
+
+  const email = parsed.data.email.trim().toLowerCase();
+  const genericMessage = "If an account exists for that email, a reset code has been issued.";
+
+  try {
+    const result = await db.query<{ id: string }>("SELECT id FROM users WHERE email = $1 LIMIT 1", [email]);
+
+    if (result.rows.length === 0) {
+      return res.json({ message: genericMessage });
+    }
+
+    const code = generatePasswordResetCode();
+    const codeHash = hashPasswordResetCode(email, code);
+    const expiresAt = new Date(Date.now() + passwordResetTtlMinutes * 60 * 1000).toISOString();
+
+    await db.query(
+      `UPDATE users
+       SET password_reset_code_hash = $1,
+           password_reset_expires_at = $2,
+           password_reset_requested_at = NOW()
+       WHERE email = $3`,
+      [codeHash, expiresAt, email]
+    );
+
+    return res.json({
+      message: genericMessage,
+      reset_code_preview: allowPasswordResetCodePreview ? code : undefined,
+      expires_at: allowPasswordResetCodePreview ? expiresAt : undefined
+    });
+  } catch (error) {
+    return res.status(500).json({ error: "Failed to start password reset", details: String(error) });
+  }
+});
+
+app.post("/auth/reset-password", async (req: Request, res: Response) => {
+  const parsed = passwordResetConfirmSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid payload", details: parsed.error.flatten() });
+  }
+
+  const email = parsed.data.email.trim().toLowerCase();
+  const codeHash = hashPasswordResetCode(email, parsed.data.code.trim());
+  const newPasswordHash = await bcrypt.hash(parsed.data.new_password, 12);
+
+  try {
+    const updated = await db.query<{ id: string; email: string; role: string | null }>(
+      `UPDATE users
+       SET password_hash = $1,
+           password_reset_code_hash = NULL,
+           password_reset_expires_at = NULL,
+           password_reset_requested_at = NULL
+       WHERE email = $2
+         AND password_reset_code_hash = $3
+         AND password_reset_expires_at IS NOT NULL
+         AND password_reset_expires_at > NOW()
+       RETURNING id, email, role`,
+      [newPasswordHash, email, codeHash]
+    );
+
+    if (updated.rows.length === 0) {
+      return res.status(400).json({ error: "Invalid or expired reset code" });
+    }
+
+    const user = updated.rows[0];
+    const token = signToken(user.id);
+    return res.json({
+      message: "Password updated successfully.",
+      token,
+      user: { id: user.id, email: user.email, role: user.role ?? "user" }
+    });
+  } catch (error) {
+    return res.status(500).json({ error: "Failed to reset password", details: String(error) });
+  }
+});
+
 app.get("/auth/me", requireAuth, async (req: Request, res: Response) => {
   const authReq = req as AuthenticatedRequest;
 
@@ -301,10 +402,18 @@ app.post("/weekly-entry", requireAuth, async (req: Request, res: Response) => {
     await client.query("BEGIN");
 
     const weeklyInsert = await client.query<{ id: string }>(
-      `INSERT INTO weekly_entries (user_id, week_start_date, tax_year, income_total, created_at, version, is_locked)
-       VALUES ($1, $2, $3, $4, NOW(), 1, TRUE)
+      `INSERT INTO weekly_entries (
+         user_id, week_start_date, tax_year, income_total, company_providing_services_for, created_at, version, is_locked
+       )
+       VALUES ($1, $2, $3, $4, $5, NOW(), 1, TRUE)
        RETURNING id`,
-      [authReq.userId, payload.week_start_date, taxYear, payload.income_total]
+      [
+        authReq.userId,
+        payload.week_start_date,
+        taxYear,
+        payload.income_total,
+        payload.company_providing_services_for?.trim() || null
+      ]
     );
 
     const weeklyEntryId = weeklyInsert.rows[0].id;
@@ -355,6 +464,7 @@ app.post("/weekly-entry", requireAuth, async (req: Request, res: Response) => {
       hasFoodExpense: payload.expenses.some((expense) => expense.category.toLowerCase() === "food"),
       excessReimbursement
     });
+    const monitoringSnapshot = await getRuleMonitoringSnapshot(taxYear);
 
     await db.query(
       `INSERT INTO tax_summaries (
@@ -394,7 +504,8 @@ app.post("/weekly-entry", requireAuth, async (req: Request, res: Response) => {
         rule_set_id: rules.id,
         rule_version: rules.version,
         rule_source_reference: rules.source_reference,
-        warnings
+        warnings,
+        review: monitoringSnapshot.review
       }
     });
   } catch (error) {
@@ -908,6 +1019,7 @@ app.get("/tax-estimate/:weekId", requireAuth, async (req: Request, res: Response
       hasFoodExpense,
       excessReimbursement: 0
     });
+    const monitoringSnapshot = await getRuleMonitoringSnapshot(taxYear);
 
     return res.json({
       week_id: weekId,
@@ -918,7 +1030,8 @@ app.get("/tax-estimate/:weekId", requireAuth, async (req: Request, res: Response
         rule_set_id: rules.id,
         rule_version: rules.version,
         rule_source_reference: rules.source_reference,
-        warnings
+        warnings,
+        review: monitoringSnapshot.review
       }
     });
   } catch (error) {
@@ -960,6 +1073,17 @@ app.get("/export/:taxYear", requireAuth, async (req: Request, res: Response) => 
       [authReq.userId, taxYear]
     );
 
+    const companies = await db.query<{ company: string }>(
+      `SELECT DISTINCT TRIM(company_providing_services_for) AS company
+       FROM weekly_entries
+       WHERE user_id = $1
+         AND tax_year = $2
+         AND company_providing_services_for IS NOT NULL
+         AND TRIM(company_providing_services_for) <> ''
+       ORDER BY company ASC`,
+      [authReq.userId, taxYear]
+    );
+
     const row = totals.rows[0];
     const payload = {
       tax_year: taxYear,
@@ -968,6 +1092,7 @@ app.get("/export/:taxYear", requireAuth, async (req: Request, res: Response) => 
       net_profit: Number(row.net_profit),
       estimated_income_tax: Number(row.estimated_income_tax),
       estimated_ni: Number(row.estimated_ni),
+      companies_worked_for: companies.rows.map((c: { company: string }) => c.company),
       expenses_by_category: categories.rows.map((c: { category: string; total: string }) => ({
         category: c.category,
         total: Number(c.total)
@@ -984,6 +1109,10 @@ app.get("/export/:taxYear", requireAuth, async (req: Request, res: Response) => 
         `estimated_income_tax,${payload.estimated_income_tax}`,
         `estimated_ni,${payload.estimated_ni}`
       ];
+
+      for (const company of payload.companies_worked_for) {
+        lines.push(`company_worked_for,${company}`);
+      }
 
       for (const category of payload.expenses_by_category) {
         lines.push(`expense_${category.category},${category.total}`);

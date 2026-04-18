@@ -7,10 +7,12 @@ type Screen = "week" | "summary" | "export" | "admin" | "guide";
 
 export function AppHeader({
   screen,
-  onChange
+  onChange,
+  isAdmin = false
 }: {
   screen: Screen;
   onChange: (next: Screen) => void;
+  isAdmin?: boolean;
 }): React.JSX.Element {
   return (
     <View style={styles.header}>
@@ -20,7 +22,7 @@ export function AppHeader({
         <NavButton label="This Week" active={screen === "week"} onPress={() => onChange("week")} />
         <NavButton label="Year Summary" active={screen === "summary"} onPress={() => onChange("summary")} />
         <NavButton label="Export" active={screen === "export"} onPress={() => onChange("export")} />
-        <NavButton label="Admin" active={screen === "admin"} onPress={() => onChange("admin")} />
+        {isAdmin && <NavButton label="Admin" active={screen === "admin"} onPress={() => onChange("admin")} />}
         <NavButton label="Guide" active={screen === "guide"} onPress={() => onChange("guide")} />
       </View>
     </View>
