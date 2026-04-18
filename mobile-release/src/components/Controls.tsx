@@ -57,10 +57,18 @@ export function SnapshotTile({ label, value }: { label: string; value: string })
   );
 }
 
-export function SmallAction({ label, onPress }: { label: string; onPress: () => void }): React.JSX.Element {
+export function SmallAction({
+  label,
+  onPress,
+  active = false
+}: {
+  label: string;
+  onPress: () => void;
+  active?: boolean;
+}): React.JSX.Element {
   return (
-    <Pressable onPress={onPress} style={styles.smallActionButton}>
-      <Text style={styles.smallActionText}>{label}</Text>
+    <Pressable onPress={onPress} style={[styles.smallActionButton, active && styles.smallActionButtonActive]}>
+      <Text style={[styles.smallActionText, active && styles.smallActionTextActive]}>{label}</Text>
     </Pressable>
   );
 }
@@ -161,12 +169,21 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 10,
     borderRadius: radius.sm,
-    backgroundColor: colors.accentSoft
+    backgroundColor: colors.accentSoft,
+    borderWidth: 1,
+    borderColor: colors.cardBorder
+  },
+  smallActionButtonActive: {
+    backgroundColor: colors.accent,
+    borderColor: colors.accent
   },
   smallActionText: {
     fontSize: typography.small,
     color: colors.sectionHint,
     fontWeight: "700"
+  },
+  smallActionTextActive: {
+    color: colors.accentText
   },
   previewPill: {
     flex: 1,

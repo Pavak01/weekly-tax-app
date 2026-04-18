@@ -38,6 +38,11 @@ type AuthUser = {
   role?: string;
 };
 
+type TwoFactorStatusResponse = {
+  enabled: boolean;
+  pending_setup: boolean;
+};
+
 type ReceiptRecord = {
   id: string;
   weekly_entry_id: string;
@@ -86,14 +91,20 @@ export default function App(): React.JSX.Element {
 
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
-  const [authMode, setAuthMode] = useState<"login" | "register" | "reset">("login");
+  const [authMode, setAuthMode] = useState<"login" | "register" | "reset" | "verify2fa">("login");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authPasswordConfirm, setAuthPasswordConfirm] = useState("");
   const [resetCode, setResetCode] = useState("");
   const [resetCodePreview, setResetCodePreview] = useState<string | null>(null);
+  const [twoFactorCode, setTwoFactorCode] = useState("");
+  const [twoFactorChallengeToken, setTwoFactorChallengeToken] = useState<string | null>(null);
+  const [twoFactorEnabled, setTwoFactorEnabled] = useState(false);
+  const [twoFactorSetupKey, setTwoFactorSetupKey] = useState<string | null>(null);
+  const [twoFactorSetupUri, setTwoFactorSetupUri] = useState<string | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(false);
   const [isRequestingReset, setIsRequestingReset] = useState(false);
+  const [isLoadingTwoFactor, setIsLoadingTwoFactor] = useState(false);
 
   const [entryMode, setEntryMode] = useState<EntryMode>("weekly");
   const [entryDate, setEntryDate] = useState("2026-04-06");
@@ -102,10 +113,13 @@ export default function App(): React.JSX.Element {
   const [income, setIncome] = useState("950");
 
   const [fuel, setFuel] = useState("0");
+  const [fuelReimbursed, setFuelReimbursed] = useState("0");
   const [travel, setTravel] = useState("40");
   const [travelReimbursed, setTravelReimbursed] = useState("10");
   const [food, setFood] = useState("0");
+  const [foodReimbursed, setFoodReimbursed] = useState("0");
   const [other, setOther] = useState("0");
+  const [otherReimbursed, setOtherReimbursed] = useState("0");
 
   const [setAside, setSetAside] = useState<number | null>(null);
   const [estimatedTax, setEstimatedTax] = useState<number | null>(null);
@@ -161,12 +175,12 @@ export default function App(): React.JSX.Element {
 
   const expenses = useMemo(
     () => [
-      { category: "fuel", total_amount: Number(fuel || 0), reimbursed_amount: 0 },
+      { category: "fuel", total_amount: Number(fuel || 0), reimbursed_amount: Number(fuelReimbursed || 0) },
       { category: "travel", total_amount: Number(travel || 0), reimbursed_amount: Number(travelReimbursed || 0) },
-      { category: "food", total_amount: Number(food || 0), reimbursed_amount: 0 },
-      { category: "other", total_amount: Number(other || 0), reimbursed_amount: 0 }
+      { category: "food", total_amount: Number(food || 0), reimbursed_amount: Number(foodReimbursed || 0) },
+      { category: "other", total_amount: Number(other || 0), reimbursed_amount: Number(otherReimbursed || 0) }
     ],
-    [fuel, travel, travelReimbursed, food, other]
+    [fuel, fuelReimbursed, travel, travelReimbursed, food, foodReimbursed, other, otherReimbursed]
   );
 
   const expensePreview = useMemo(() => {
@@ -175,11 +189,13 @@ export default function App(): React.JSX.Element {
       (sum, item) => sum + Math.max(0, item.total_amount - item.reimbursed_amount),
       0
     );
+    const totalReimbursed = expenses.reduce((sum, item) => sum + item.reimbursed_amount, 0);
     const profit = Number(income || 0) - totalClaimable;
 
     return {
       totalGross,
       totalClaimable,
+      totalReimbursed,
       profit
     };
   }, [expenses, income]);
@@ -210,6 +226,18 @@ export default function App(): React.JSX.Element {
       setScreen("week");
     }
   }, [isAdmin, screen]);
+
+  useEffect(() => {
+    if (authToken && authUser) {
+      void fetchTwoFactorStatus();
+    } else {
+      setTwoFactorEnabled(false);
+      setTwoFactorSetupKey(null);
+      setTwoFactorSetupUri(null);
+      setTwoFactorChallengeToken(null);
+      setTwoFactorCode("");
+    }
+  }, [authToken, authUser]);
 
   useEffect(() => {
     void (async () => {
@@ -344,10 +372,13 @@ export default function App(): React.JSX.Element {
 
   function fillQuickExpensePreset(): void {
     setFuel("25");
+    setFuelReimbursed("0");
     setTravel("35");
     setTravelReimbursed("0");
     setFood("8");
+    setFoodReimbursed("0");
     setOther("0");
+    setOtherReimbursed("0");
   }
 
   function isDate(value: string): boolean {
@@ -375,12 +406,16 @@ export default function App(): React.JSX.Element {
     });
   }
 
-  function switchAuthMode(nextMode: "login" | "register" | "reset"): void {
+  function switchAuthMode(nextMode: "login" | "register" | "reset" | "verify2fa"): void {
     setAuthMode(nextMode);
     setAuthPassword("");
     setAuthPasswordConfirm("");
     setResetCode("");
     setResetCodePreview(null);
+    setTwoFactorCode("");
+    if (nextMode !== "verify2fa") {
+      setTwoFactorChallengeToken(null);
+    }
   }
 
   async function saveAuthState(token: string, user: AuthUser): Promise<void> {
@@ -397,10 +432,161 @@ export default function App(): React.JSX.Element {
     setAuthPasswordConfirm("");
     setResetCode("");
     setResetCodePreview(null);
+    setTwoFactorCode("");
+    setTwoFactorChallengeToken(null);
+    setTwoFactorEnabled(false);
+    setTwoFactorSetupKey(null);
+    setTwoFactorSetupUri(null);
     setCurrentWeekId(null);
     setReceipts([]);
     await AsyncStorage.removeItem(AUTH_STATE_KEY);
     setStatus({ kind: "info", text: "Signed out." });
+  }
+
+  async function fetchTwoFactorStatus(): Promise<void> {
+    try {
+      const response = await authedFetch("/auth/2fa/status");
+      const payload = (await response.json()) as TwoFactorStatusResponse;
+      if (response.ok) {
+        setTwoFactorEnabled(Boolean(payload.enabled));
+        if (!payload.pending_setup) {
+          setTwoFactorSetupKey(null);
+          setTwoFactorSetupUri(null);
+        }
+      }
+    } catch {
+      // Keep the existing session even if the status check fails.
+    }
+  }
+
+  async function startTwoFactorSetup(): Promise<void> {
+    setIsLoadingTwoFactor(true);
+    try {
+      const response = await authedFetch("/auth/2fa/setup", {
+        method: "POST",
+        body: JSON.stringify({})
+      });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        Alert.alert("2-Step Verification", payload.error || "Could not start setup.");
+        return;
+      }
+
+      setTwoFactorSetupKey(payload.manual_entry_key ?? null);
+      setTwoFactorSetupUri(payload.otpauth_url ?? null);
+      setTwoFactorCode("");
+      setStatus({ kind: "info", text: "Add the setup key to your authenticator app, then enter the 6-digit code." });
+      Alert.alert(
+        "Authenticator Setup Key",
+        `Add this key to Google Authenticator, Microsoft Authenticator, or Authy:\n\n${payload.manual_entry_key}`
+      );
+    } catch (error) {
+      Alert.alert("Network error", String(error));
+    } finally {
+      setIsLoadingTwoFactor(false);
+    }
+  }
+
+  async function enableTwoFactor(): Promise<void> {
+    if (!twoFactorCode.trim()) {
+      Alert.alert("Validation", "Enter the 6-digit authenticator code.");
+      return;
+    }
+
+    setIsLoadingTwoFactor(true);
+    try {
+      const response = await authedFetch("/auth/2fa/enable", {
+        method: "POST",
+        body: JSON.stringify({ code: twoFactorCode.trim() })
+      });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        Alert.alert("2-Step Verification", payload.error || "Could not enable 2-step verification.");
+        return;
+      }
+
+      setTwoFactorEnabled(true);
+      setTwoFactorSetupKey(null);
+      setTwoFactorSetupUri(null);
+      setTwoFactorCode("");
+      setStatus({ kind: "info", text: payload.message || "Two-step verification enabled." });
+    } catch (error) {
+      Alert.alert("Network error", String(error));
+    } finally {
+      setIsLoadingTwoFactor(false);
+    }
+  }
+
+  async function disableTwoFactor(): Promise<void> {
+    if (!twoFactorCode.trim()) {
+      Alert.alert("Validation", "Enter your current authenticator code to disable 2-step verification.");
+      return;
+    }
+
+    setIsLoadingTwoFactor(true);
+    try {
+      const response = await authedFetch("/auth/2fa/disable", {
+        method: "POST",
+        body: JSON.stringify({ code: twoFactorCode.trim() })
+      });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        Alert.alert("2-Step Verification", payload.error || "Could not disable 2-step verification.");
+        return;
+      }
+
+      setTwoFactorEnabled(false);
+      setTwoFactorSetupKey(null);
+      setTwoFactorSetupUri(null);
+      setTwoFactorCode("");
+      setStatus({ kind: "info", text: payload.message || "Two-step verification disabled." });
+    } catch (error) {
+      Alert.alert("Network error", String(error));
+    } finally {
+      setIsLoadingTwoFactor(false);
+    }
+  }
+
+  async function verifyTwoFactorSignIn(): Promise<void> {
+    if (!twoFactorChallengeToken || !twoFactorCode.trim()) {
+      Alert.alert("Validation", "Enter the 6-digit authenticator code.");
+      return;
+    }
+
+    setIsAuthLoading(true);
+    setStatus({ kind: "info", text: "Verifying sign-in code..." });
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/verify-2fa`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          challenge_token: twoFactorChallengeToken,
+          code: twoFactorCode.trim()
+        })
+      });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        Alert.alert("Verification error", payload.error || "Two-step verification failed.");
+        setStatus({ kind: "error", text: payload.error || "Two-step verification failed." });
+        return;
+      }
+
+      setTwoFactorCode("");
+      setTwoFactorChallengeToken(null);
+      await saveAuthState(payload.token, payload.user as AuthUser);
+      setAuthMode("login");
+      setStatus({ kind: "info", text: `Signed in as ${payload.user.email}.` });
+    } catch (error) {
+      Alert.alert("Network error", String(error));
+      setStatus({ kind: "error", text: "Network error during sign-in verification." });
+    } finally {
+      setIsAuthLoading(false);
+    }
   }
 
   async function loadReceipts(weeklyEntryId: string): Promise<void> {
@@ -618,6 +804,11 @@ export default function App(): React.JSX.Element {
       return;
     }
 
+    if (authMode === "verify2fa") {
+      await verifyTwoFactorSignIn();
+      return;
+    }
+
     if (!authEmail.trim() || !authPassword.trim()) {
       Alert.alert("Validation", "Email and password are required.");
       return;
@@ -637,7 +828,8 @@ export default function App(): React.JSX.Element {
     setStatus({ kind: "info", text: authMode === "register" ? "Creating account..." : "Signing in..." });
 
     try {
-      const response = await fetch(`${API_BASE_URL}/auth/${authMode}`, {
+      const route = authMode === "register" ? "register" : "login";
+      const response = await fetch(`${API_BASE_URL}/auth/${route}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: authEmail.trim(), password: authPassword })
@@ -650,6 +842,14 @@ export default function App(): React.JSX.Element {
         return;
       }
 
+      if (payload.two_factor_required && payload.challenge_token) {
+        setTwoFactorChallengeToken(payload.challenge_token as string);
+        setAuthMode("verify2fa");
+        setTwoFactorCode("");
+        setStatus({ kind: "info", text: payload.message || "Enter your authenticator code to finish signing in." });
+        return;
+      }
+
       await saveAuthState(payload.token, payload.user as AuthUser);
       setStatus({ kind: "info", text: `Signed in as ${payload.user.email}.` });
     } catch (error) {
@@ -658,6 +858,23 @@ export default function App(): React.JSX.Element {
     } finally {
       setIsAuthLoading(false);
     }
+  }
+
+  function confirmWeeklyEntrySubmission(): void {
+    Alert.alert(
+      entryMode === "daily" ? "Confirm daily submission" : "Confirm weekly submission",
+      "Please check your figures carefully. After submission, this record is locked and changes cannot be made.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: entryMode === "daily" ? "Submit day" : "Submit week",
+          style: "destructive",
+          onPress: () => {
+            void submitWeeklyEntry();
+          }
+        }
+      ]
+    );
   }
 
   async function submitWeeklyEntry(): Promise<void> {
@@ -989,7 +1206,9 @@ export default function App(): React.JSX.Element {
               <Text style={styles.noteText}>
                 {authMode === "reset"
                   ? "Request a reset code and choose a new password."
-                  : "Create your account or sign in to access weekly tax records."}
+                  : authMode === "verify2fa"
+                    ? "Open your authenticator app and enter the 6-digit code to finish signing in."
+                    : "Create your account or sign in to access weekly tax records."}
               </Text>
 
               <Field label="Email" value={authEmail} onChange={setAuthEmail} placeholder="you@example.com" />
@@ -1031,6 +1250,13 @@ export default function App(): React.JSX.Element {
                     placeholder="Repeat your new password"
                   />
                 </>
+              ) : authMode === "verify2fa" ? (
+                <Field
+                  label="Authenticator Code"
+                  value={twoFactorCode}
+                  onChange={setTwoFactorCode}
+                  placeholder="6-digit code"
+                />
               ) : (
                 <>
                   <Field
@@ -1063,7 +1289,9 @@ export default function App(): React.JSX.Element {
                       ? "Create Account"
                       : authMode === "reset"
                         ? "Update Password"
-                        : "Sign In"}
+                        : authMode === "verify2fa"
+                          ? "Verify Sign-In"
+                          : "Sign In"}
                   </Text>
                 )}
               </Pressable>
@@ -1081,7 +1309,7 @@ export default function App(): React.JSX.Element {
                 <Text style={styles.switchModeText}>
                   {authMode === "register"
                     ? "Already have an account? Sign in"
-                    : authMode === "reset"
+                    : authMode === "reset" || authMode === "verify2fa"
                       ? "Back to sign in"
                       : "Need an account? Register"}
                 </Text>
@@ -1129,8 +1357,8 @@ export default function App(): React.JSX.Element {
               {screen === "week" && (
                 <FormSection title={entryMode === "daily" ? "Daily Entry" : "This Week"}>
                   <View style={styles.quickActionsRow}>
-                    <SmallAction label="Weekly Mode" onPress={() => setEntryMode("weekly")} />
-                    <SmallAction label="Daily Mode" onPress={() => setEntryMode("daily")} />
+                    <SmallAction label="Weekly Mode" onPress={() => setEntryMode("weekly")} active={entryMode === "weekly"} />
+                    <SmallAction label="Daily Mode" onPress={() => setEntryMode("daily")} active={entryMode === "daily"} />
                   </View>
                   <Text style={styles.noteText}>
                     {entryMode === "daily"
@@ -1177,7 +1405,14 @@ export default function App(): React.JSX.Element {
                   />
 
                   <Text style={styles.subSection}>Expenses</Text>
+                  <Text style={styles.noteText}>Add any amounts reimbursed back to you so claimable expenses stay accurate.</Text>
                   <Field label="Fuel (£)" value={fuel} onChange={setFuel} keyboardType="decimal-pad" />
+                  <Field
+                    label="Fuel Reimbursed (£)"
+                    value={fuelReimbursed}
+                    onChange={setFuelReimbursed}
+                    keyboardType="decimal-pad"
+                  />
                   <Field label="Travel (£)" value={travel} onChange={setTravel} keyboardType="decimal-pad" />
                   <Field
                     label="Travel Reimbursed (£)"
@@ -1186,7 +1421,19 @@ export default function App(): React.JSX.Element {
                     keyboardType="decimal-pad"
                   />
                   <Field label="Food (£)" value={food} onChange={setFood} keyboardType="decimal-pad" />
+                  <Field
+                    label="Food Reimbursed (£)"
+                    value={foodReimbursed}
+                    onChange={setFoodReimbursed}
+                    keyboardType="decimal-pad"
+                  />
                   <Field label="Other (£)" value={other} onChange={setOther} keyboardType="decimal-pad" />
+                  <Field
+                    label="Other Reimbursed (£)"
+                    value={otherReimbursed}
+                    onChange={setOtherReimbursed}
+                    keyboardType="decimal-pad"
+                  />
 
                   <View style={styles.previewRow}>
                     <PreviewPill label="Gross expenses" value={expensePreview.totalGross} />
@@ -1194,8 +1441,11 @@ export default function App(): React.JSX.Element {
                     <PreviewPill label={entryMode === "daily" ? "Daily profit" : "Weekly profit"} value={expensePreview.profit} />
                   </View>
 
+                  <Text style={[styles.noteText, { color: colors.accent, fontWeight: "700" }]}>Warning: once submitted, this entry is locked and cannot be changed.</Text>
+                  <Text style={styles.noteText}>Expenses reimbursed: £{expensePreview.totalReimbursed.toFixed(2)}</Text>
+
                   <Pressable
-                    onPress={submitWeeklyEntry}
+                    onPress={confirmWeeklyEntrySubmission}
                     style={[styles.primaryButton, isSavingWeek && styles.buttonDisabled]}
                     disabled={isSavingWeek}
                   >
@@ -1462,8 +1712,8 @@ export default function App(): React.JSX.Element {
                     placeholder="user@example.com"
                   />
                   <View style={styles.quickActionsRow}>
-                    <SmallAction label="Set Admin" onPress={() => setAdminTargetRole("admin")} />
-                    <SmallAction label="Set User" onPress={() => setAdminTargetRole("user")} />
+                    <SmallAction label="Set Admin" onPress={() => setAdminTargetRole("admin")} active={adminTargetRole === "admin"} />
+                    <SmallAction label="Set User" onPress={() => setAdminTargetRole("user")} active={adminTargetRole === "user"} />
                   </View>
                   <Text style={styles.noteText}>Selected role: {adminTargetRole}</Text>
                   <Pressable
@@ -1484,16 +1734,21 @@ export default function App(): React.JSX.Element {
                 <FormSection title="User Guide & FAQ">
                   <Text style={styles.subSection}>Quick User Guide</Text>
                   <Text style={styles.guideItem}>1. Sign in or create your account.</Text>
-                  <Text style={styles.guideItem}>2. Go to This Week and enter income and expenses.</Text>
-                  <Text style={styles.guideItem}>3. Save weekly entry to lock a timestamped record.</Text>
-                  <Text style={styles.guideItem}>4. Upload receipts after saving the weekly entry.</Text>
-                  <Text style={styles.guideItem}>5. Use Year Summary for annual estimate tracking.</Text>
-                  <Text style={styles.guideItem}>6. Use Export to generate JSON for your records.</Text>
+                  <Text style={styles.guideItem}>2. Choose weekly or daily mode, then enter income and expenses.</Text>
+                  <Text style={styles.guideItem}>3. Add any reimbursed expenses so the claimable total stays accurate.</Text>
+                  <Text style={styles.guideItem}>4. Confirm the submission warning before saving your locked record.</Text>
+                  <Text style={styles.guideItem}>5. Upload receipts after saving the weekly entry.</Text>
+                  <Text style={styles.guideItem}>6. Use Year Summary and Export for annual review and records.</Text>
 
                   <Text style={styles.subSection}>FAQ</Text>
                   <Text style={styles.faqQuestion}>Why is my entry locked after save?</Text>
                   <Text style={styles.noteText}>
-                    Entries are intentionally immutable for compliance traceability and audit reliability.
+                    Entries are intentionally locked after confirmation for compliance traceability and audit reliability.
+                  </Text>
+
+                  <Text style={styles.faqQuestion}>How do reimbursed expenses work?</Text>
+                  <Text style={styles.noteText}>
+                    Reimbursed amounts are removed from the claimable expense total so your estimate stays more accurate.
                   </Text>
 
                   <Text style={styles.faqQuestion}>Are tax values final HMRC liabilities?</Text>
@@ -1510,6 +1765,76 @@ export default function App(): React.JSX.Element {
                   <Text style={styles.noteText}>
                     Open Admin tab, review monitoring, then publish the next version. Changes are audit logged.
                   </Text>
+
+                  <Text style={styles.subSection}>Security</Text>
+                  <Text style={styles.noteText}>
+                    Two-step verification is currently {twoFactorEnabled ? "enabled" : "not enabled"} for this account.
+                  </Text>
+
+                  {!twoFactorEnabled && !twoFactorSetupKey && (
+                    <Pressable
+                      onPress={startTwoFactorSetup}
+                      style={[styles.primaryButton, isLoadingTwoFactor && styles.buttonDisabled]}
+                      disabled={isLoadingTwoFactor}
+                    >
+                      {isLoadingTwoFactor ? (
+                        <ActivityIndicator color={colors.accentText} />
+                      ) : (
+                        <Text style={styles.primaryButtonText}>Start 2-Step Verification</Text>
+                      )}
+                    </Pressable>
+                  )}
+
+                  {!twoFactorEnabled && !!twoFactorSetupKey && (
+                    <>
+                      <Text style={styles.noteText}>Manual setup key: {twoFactorSetupKey}</Text>
+                      {!!twoFactorSetupUri && (
+                        <Text style={styles.noteText}>Authenticator setup data is ready for QR-compatible tools.</Text>
+                      )}
+                      <Field
+                        label="Authenticator Code"
+                        value={twoFactorCode}
+                        onChange={setTwoFactorCode}
+                        placeholder="6-digit code"
+                      />
+                      <Pressable
+                        onPress={enableTwoFactor}
+                        style={[styles.primaryButton, isLoadingTwoFactor && styles.buttonDisabled]}
+                        disabled={isLoadingTwoFactor}
+                      >
+                        {isLoadingTwoFactor ? (
+                          <ActivityIndicator color={colors.accentText} />
+                        ) : (
+                          <Text style={styles.primaryButtonText}>Enable 2-Step Verification</Text>
+                        )}
+                      </Pressable>
+                    </>
+                  )}
+
+                  {twoFactorEnabled && (
+                    <>
+                      <Text style={styles.noteText}>
+                        Open your authenticator app to confirm sensitive account changes.
+                      </Text>
+                      <Field
+                        label="Authenticator Code"
+                        value={twoFactorCode}
+                        onChange={setTwoFactorCode}
+                        placeholder="6-digit code"
+                      />
+                      <Pressable
+                        onPress={disableTwoFactor}
+                        style={[styles.primaryButton, isLoadingTwoFactor && styles.buttonDisabled]}
+                        disabled={isLoadingTwoFactor}
+                      >
+                        {isLoadingTwoFactor ? (
+                          <ActivityIndicator color={colors.accentText} />
+                        ) : (
+                          <Text style={styles.primaryButtonText}>Disable 2-Step Verification</Text>
+                        )}
+                      </Pressable>
+                    </>
+                  )}
                 </FormSection>
               )}
             </Animated.ScrollView>

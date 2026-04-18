@@ -34,6 +34,9 @@ const uploadsDir = path.resolve(currentDir, "..", "uploads");
 const maxReceiptSizeBytes = 8 * 1024 * 1024;
 const receiptDownloadTtlSeconds = 15 * 60;
 const passwordResetTtlMinutes = Math.max(5, Number(process.env.PASSWORD_RESET_TTL_MINUTES || 15));
+const twoFactorChallengeTtlMinutes = Math.max(5, Number(process.env.TWO_FACTOR_CHALLENGE_TTL_MINUTES || 10));
+const twoFactorTimeStepSeconds = 30;
+const twoFactorAppName = "Weekly Tax App";
 const allowPasswordResetCodePreview = process.env.NODE_ENV !== "production";
 const allowedReceiptMimeTypes = new Set([
   "application/pdf",
@@ -99,6 +102,15 @@ const passwordResetConfirmSchema = z.object({
   new_password: z.string().min(8).max(128)
 });
 
+const twoFactorCodeSchema = z.object({
+  code: z.string().trim().regex(/^\d{6}$/)
+});
+
+const twoFactorVerifySchema = z.object({
+  challenge_token: z.string().min(20),
+  code: z.string().trim().regex(/^\d{6}$/)
+});
+
 const receiptUploadSchema = z.object({
   weekly_entry_id: z.string().uuid()
 });
@@ -143,6 +155,138 @@ function generatePasswordResetCode(): string {
 
 function hashPasswordResetCode(email: string, code: string): string {
   return crypto.createHash("sha256").update(`${email}:${code}:${jwtSecret}`).digest("hex");
+}
+
+function signTwoFactorChallengeToken(userId: string): string {
+  return jwt.sign({ sub: userId, purpose: "two-factor-login" }, jwtSecret, {
+    expiresIn: `${twoFactorChallengeTtlMinutes}m`
+  });
+}
+
+function getTwoFactorEncryptionKey(): Buffer {
+  const seed = process.env.TWO_FACTOR_ENCRYPTION_KEY?.trim() || jwtSecret;
+  return crypto.createHash("sha256").update(seed).digest();
+}
+
+function encryptTwoFactorSecret(secret: string): string {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", getTwoFactorEncryptionKey(), iv);
+  const encrypted = Buffer.concat([cipher.update(secret, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `${iv.toString("base64url")}.${tag.toString("base64url")}.${encrypted.toString("base64url")}`;
+}
+
+function decryptTwoFactorSecret(payload: string | null | undefined): string | null {
+  if (!payload) {
+    return null;
+  }
+
+  const [ivPart, tagPart, encryptedPart] = payload.split(".");
+  if (!ivPart || !tagPart || !encryptedPart) {
+    return null;
+  }
+
+  try {
+    const decipher = crypto.createDecipheriv(
+      "aes-256-gcm",
+      getTwoFactorEncryptionKey(),
+      Buffer.from(ivPart, "base64url")
+    );
+    decipher.setAuthTag(Buffer.from(tagPart, "base64url"));
+    const decrypted = Buffer.concat([
+      decipher.update(Buffer.from(encryptedPart, "base64url")),
+      decipher.final()
+    ]);
+    return decrypted.toString("utf8");
+  } catch {
+    return null;
+  }
+}
+
+function base32Encode(buffer: Buffer): string {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  let bits = 0;
+  let value = 0;
+  let output = "";
+
+  for (const byte of buffer) {
+    value = (value << 8) | byte;
+    bits += 8;
+
+    while (bits >= 5) {
+      output += alphabet[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+
+  if (bits > 0) {
+    output += alphabet[(value << (5 - bits)) & 31];
+  }
+
+  return output;
+}
+
+function base32Decode(value: string): Buffer {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  let bits = 0;
+  let current = 0;
+  const output: number[] = [];
+
+  for (const char of value.toUpperCase().replace(/=+$/g, "").replace(/\s+/g, "")) {
+    const index = alphabet.indexOf(char);
+    if (index === -1) {
+      continue;
+    }
+
+    current = (current << 5) | index;
+    bits += 5;
+
+    if (bits >= 8) {
+      output.push((current >>> (bits - 8)) & 255);
+      bits -= 8;
+    }
+  }
+
+  return Buffer.from(output);
+}
+
+function generateTwoFactorSecret(): string {
+  return base32Encode(crypto.randomBytes(20));
+}
+
+function generateTotpCode(secret: string, timestampMs = Date.now()): string {
+  const counter = Math.floor(timestampMs / 1000 / twoFactorTimeStepSeconds);
+  const buffer = Buffer.alloc(8);
+  buffer.writeBigUInt64BE(BigInt(counter));
+
+  const digest = crypto.createHmac("sha1", base32Decode(secret)).update(buffer).digest();
+  const offset = digest[digest.length - 1] & 0x0f;
+  const code = (digest.readUInt32BE(offset) & 0x7fffffff) % 1_000_000;
+
+  return code.toString().padStart(6, "0");
+}
+
+function verifyTotpCode(secret: string, code: string): boolean {
+  const normalized = code.trim();
+  if (!/^\d{6}$/.test(normalized)) {
+    return false;
+  }
+
+  for (let offset = -1; offset <= 1; offset += 1) {
+    const timestamp = Date.now() + offset * twoFactorTimeStepSeconds * 1000;
+    if (generateTotpCode(secret, timestamp) === normalized) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function buildTwoFactorSetup(email: string, secret: string): { manual_entry_key: string; otpauth_url: string } {
+  return {
+    manual_entry_key: secret,
+    otpauth_url: `otpauth://totp/${encodeURIComponent(`${twoFactorAppName}:${email}`)}?secret=${secret}&issuer=${encodeURIComponent(twoFactorAppName)}&algorithm=SHA1&digits=6&period=${twoFactorTimeStepSeconds}`
+  };
 }
 
 function requireAuth(req: Request, res: Response, next: NextFunction): void {
@@ -244,8 +388,18 @@ app.post("/auth/login", async (req: Request, res: Response) => {
   const email = parsed.data.email.trim().toLowerCase();
 
   try {
-    const result = await db.query<{ id: string; email: string; role: string | null; password_hash: string | null }>(
-      "SELECT id, email, role, password_hash FROM users WHERE email = $1 LIMIT 1",
+    const result = await db.query<{
+      id: string;
+      email: string;
+      role: string | null;
+      password_hash: string | null;
+      two_factor_enabled: boolean | null;
+      two_factor_secret: string | null;
+    }>(
+      `SELECT id, email, role, password_hash, two_factor_enabled, two_factor_secret
+       FROM users
+       WHERE email = $1
+       LIMIT 1`,
       [email]
     );
 
@@ -262,6 +416,16 @@ app.post("/auth/login", async (req: Request, res: Response) => {
     const ok = await bcrypt.compare(parsed.data.password, passwordHash);
     if (!ok) {
       return res.status(401).json({ error: "Invalid credentials" });
+    }
+
+    const twoFactorSecret = decryptTwoFactorSecret(user.two_factor_secret);
+    if (user.two_factor_enabled && twoFactorSecret) {
+      return res.json({
+        two_factor_required: true,
+        challenge_token: signTwoFactorChallengeToken(user.id),
+        user: { id: user.id, email: user.email, role: user.role ?? "user" },
+        message: "Enter the 6-digit code from your authenticator app to finish signing in."
+      });
     }
 
     const token = signToken(user.id);
@@ -348,6 +512,188 @@ app.post("/auth/reset-password", async (req: Request, res: Response) => {
     });
   } catch (error) {
     return res.status(500).json({ error: "Failed to reset password", details: String(error) });
+  }
+});
+
+app.post("/auth/verify-2fa", async (req: Request, res: Response) => {
+  const parsed = twoFactorVerifySchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid payload", details: parsed.error.flatten() });
+  }
+
+  let userId = "";
+  try {
+    const decoded = jwt.verify(parsed.data.challenge_token, jwtSecret);
+    if (typeof decoded !== "object" || decoded === null || decoded.purpose !== "two-factor-login") {
+      return res.status(401).json({ error: "Invalid verification challenge" });
+    }
+
+    if (typeof decoded.sub !== "string") {
+      return res.status(401).json({ error: "Invalid verification challenge" });
+    }
+
+    userId = decoded.sub;
+  } catch {
+    return res.status(401).json({ error: "Verification challenge expired" });
+  }
+
+  try {
+    const result = await db.query<{ id: string; email: string; role: string | null; two_factor_secret: string | null }>(
+      `SELECT id, email, role, two_factor_secret
+       FROM users
+       WHERE id = $1
+       LIMIT 1`,
+      [userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const user = result.rows[0];
+    const secret = decryptTwoFactorSecret(user.two_factor_secret);
+    if (!secret || !verifyTotpCode(secret, parsed.data.code)) {
+      return res.status(401).json({ error: "Invalid verification code" });
+    }
+
+    const token = signToken(user.id);
+    return res.json({ token, user: { id: user.id, email: user.email, role: user.role ?? "user" } });
+  } catch (error) {
+    return res.status(500).json({ error: "Failed to verify two-step code", details: String(error) });
+  }
+});
+
+app.get("/auth/2fa/status", requireAuth, async (req: Request, res: Response) => {
+  const authReq = req as AuthenticatedRequest;
+
+  try {
+    const result = await db.query<{ two_factor_enabled: boolean | null; two_factor_pending_secret: string | null }>(
+      `SELECT two_factor_enabled, two_factor_pending_secret
+       FROM users
+       WHERE id = $1
+       LIMIT 1`,
+      [authReq.userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    return res.json({
+      enabled: Boolean(result.rows[0].two_factor_enabled),
+      pending_setup: Boolean(result.rows[0].two_factor_pending_secret)
+    });
+  } catch (error) {
+    return res.status(500).json({ error: "Failed to load two-step status", details: String(error) });
+  }
+});
+
+app.post("/auth/2fa/setup", requireAuth, async (req: Request, res: Response) => {
+  const authReq = req as AuthenticatedRequest;
+
+  try {
+    const result = await db.query<{ email: string }>("SELECT email FROM users WHERE id = $1 LIMIT 1", [authReq.userId]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const secret = generateTwoFactorSecret();
+    const encryptedSecret = encryptTwoFactorSecret(secret);
+    await db.query(
+      `UPDATE users
+       SET two_factor_pending_secret = $1
+       WHERE id = $2`,
+      [encryptedSecret, authReq.userId]
+    );
+
+    return res.json({
+      message: "Two-step verification setup is ready.",
+      ...buildTwoFactorSetup(result.rows[0].email, secret)
+    });
+  } catch (error) {
+    return res.status(500).json({ error: "Failed to start two-step setup", details: String(error) });
+  }
+});
+
+app.post("/auth/2fa/enable", requireAuth, async (req: Request, res: Response) => {
+  const authReq = req as AuthenticatedRequest;
+  const parsed = twoFactorCodeSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid payload", details: parsed.error.flatten() });
+  }
+
+  try {
+    const result = await db.query<{ two_factor_pending_secret: string | null }>(
+      `SELECT two_factor_pending_secret
+       FROM users
+       WHERE id = $1
+       LIMIT 1`,
+      [authReq.userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const secret = decryptTwoFactorSecret(result.rows[0].two_factor_pending_secret);
+    if (!secret || !verifyTotpCode(secret, parsed.data.code)) {
+      return res.status(400).json({ error: "Invalid verification code" });
+    }
+
+    await db.query(
+      `UPDATE users
+       SET two_factor_enabled = TRUE,
+           two_factor_secret = $1,
+           two_factor_pending_secret = NULL,
+           two_factor_enabled_at = NOW()
+       WHERE id = $2`,
+      [encryptTwoFactorSecret(secret), authReq.userId]
+    );
+
+    return res.json({ message: "Two-step verification enabled." });
+  } catch (error) {
+    return res.status(500).json({ error: "Failed to enable two-step verification", details: String(error) });
+  }
+});
+
+app.post("/auth/2fa/disable", requireAuth, async (req: Request, res: Response) => {
+  const authReq = req as AuthenticatedRequest;
+  const parsed = twoFactorCodeSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid payload", details: parsed.error.flatten() });
+  }
+
+  try {
+    const result = await db.query<{ two_factor_secret: string | null }>(
+      `SELECT two_factor_secret
+       FROM users
+       WHERE id = $1
+       LIMIT 1`,
+      [authReq.userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const secret = decryptTwoFactorSecret(result.rows[0].two_factor_secret);
+    if (!secret || !verifyTotpCode(secret, parsed.data.code)) {
+      return res.status(400).json({ error: "Invalid verification code" });
+    }
+
+    await db.query(
+      `UPDATE users
+       SET two_factor_enabled = FALSE,
+           two_factor_secret = NULL,
+           two_factor_pending_secret = NULL,
+           two_factor_enabled_at = NULL
+       WHERE id = $1`,
+      [authReq.userId]
+    );
+
+    return res.json({ message: "Two-step verification disabled." });
+  } catch (error) {
+    return res.status(500).json({ error: "Failed to disable two-step verification", details: String(error) });
   }
 });
 
