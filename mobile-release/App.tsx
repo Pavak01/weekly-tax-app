@@ -187,6 +187,7 @@ export default function App(): React.JSX.Element {
 
   const contentOpacity = useRef(new Animated.Value(1)).current;
   const statusPulse = useRef(new Animated.Value(1)).current;
+  const sessionExpiryNoticeShown = useRef(false);
   const canUseNativeDriver = Platform.OS !== "web";
 
   const expenses = useMemo(
@@ -245,6 +246,7 @@ export default function App(): React.JSX.Element {
 
   useEffect(() => {
     if (authToken && authUser) {
+      void validateSession();
       void fetchTwoFactorStatus();
     } else {
       setTwoFactorEnabled(false);
@@ -340,9 +342,30 @@ export default function App(): React.JSX.Element {
           };
 
           if (auth.token && auth.user) {
-            setAuthToken(auth.token);
-            setAuthUser(auth.user);
-            setStatus({ kind: "info", text: `Welcome back, ${auth.user.email}.` });
+            let canRestoreSession = true;
+
+            try {
+              const response = await fetch(`${API_BASE_URL}/auth/me`, {
+                headers: {
+                  Authorization: `Bearer ${auth.token}`
+                }
+              });
+
+              if (response.status === 401) {
+                canRestoreSession = false;
+                await AsyncStorage.removeItem(AUTH_STATE_KEY);
+                setAuthEmail(auth.user.email);
+                setStatus({ kind: "error", text: "Your saved session expired. Please sign in again." });
+              }
+            } catch {
+              canRestoreSession = true;
+            }
+
+            if (canRestoreSession) {
+              setAuthToken(auth.token);
+              setAuthUser(auth.user);
+              setStatus({ kind: "info", text: `Welcome back, ${auth.user.email}.` });
+            }
           }
         }
       } catch {
@@ -620,10 +643,16 @@ export default function App(): React.JSX.Element {
       ...(init?.headers as Record<string, string> | undefined)
     };
 
-    return fetch(`${API_BASE_URL}${path}`, {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
       ...init,
       headers
     });
+
+    if (response.status === 401) {
+      await handleExpiredSession();
+    }
+
+    return response;
   }
 
   function switchAuthMode(nextMode: "login" | "register" | "reset" | "verify2fa"): void {
@@ -639,15 +668,22 @@ export default function App(): React.JSX.Element {
   }
 
   async function saveAuthState(token: string, user: AuthUser): Promise<void> {
+    sessionExpiryNoticeShown.current = false;
     setAuthToken(token);
     setAuthUser(user);
     await AsyncStorage.setItem(AUTH_STATE_KEY, JSON.stringify({ token, user }));
   }
 
-  async function clearAuthState(): Promise<void> {
+  async function clearAuthState(
+    message = "Signed out.",
+    kind: "info" | "error" = "info",
+    preserveEmail = false
+  ): Promise<void> {
+    const rememberedEmail = preserveEmail ? authUser?.email ?? authEmail : "";
+
     setAuthToken(null);
     setAuthUser(null);
-    setAuthEmail("");
+    setAuthEmail(rememberedEmail);
     setAuthPassword("");
     setAuthPasswordConfirm("");
     setResetCode("");
@@ -659,8 +695,35 @@ export default function App(): React.JSX.Element {
     setTwoFactorSetupUri(null);
     setCurrentWeekId(null);
     setReceipts([]);
+    setSummary(null);
+    setExportData("");
+    setSetAside(null);
+    setEstimatedTax(null);
+    setModeLock(null);
+    setAuthMode("login");
     await AsyncStorage.removeItem(AUTH_STATE_KEY);
-    setStatus({ kind: "info", text: "Signed out." });
+    setStatus({ kind, text: message });
+
+    if (message === "Signed out.") {
+      sessionExpiryNoticeShown.current = false;
+    }
+  }
+
+  async function handleExpiredSession(): Promise<void> {
+    await clearAuthState("Your session expired. Please sign in again.", "error", true);
+
+    if (!sessionExpiryNoticeShown.current) {
+      sessionExpiryNoticeShown.current = true;
+      Alert.alert("Session expired", "Your session expired. Please sign in again.");
+    }
+  }
+
+  async function validateSession(): Promise<void> {
+    try {
+      await authedFetch("/auth/me");
+    } catch {
+      // Ignore connectivity issues during background session validation.
+    }
   }
 
   async function fetchTwoFactorStatus(): Promise<void> {
@@ -1678,7 +1741,12 @@ export default function App(): React.JSX.Element {
                 <Text style={styles.label}>Signed in as</Text>
                 <Text style={styles.signedInEmail}>{authUser.email}</Text>
                 <Text style={styles.noteText}>Role: {authUser.role ?? "user"}</Text>
-                <Pressable onPress={clearAuthState} style={styles.smallSignOutButton}>
+                <Pressable
+                  onPress={() => {
+                    void clearAuthState();
+                  }}
+                  style={styles.smallSignOutButton}
+                >
                   <Text style={styles.smallSignOutText}>Sign out</Text>
                 </Pressable>
               </Card>
