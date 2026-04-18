@@ -10,6 +10,10 @@ CREATE TABLE IF NOT EXISTS users (
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_code_hash TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_expires_at TIMESTAMP;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_requested_at TIMESTAMP;
+ALTER TABLE weekly_entries ADD COLUMN IF NOT EXISTS company_providing_services_for TEXT;
 UPDATE users SET role = 'user' WHERE role IS NULL;
 
 CREATE TABLE IF NOT EXISTS weekly_entries (
@@ -18,6 +22,7 @@ CREATE TABLE IF NOT EXISTS weekly_entries (
   week_start_date DATE NOT NULL,
   tax_year TEXT NOT NULL,
   income_total NUMERIC(12,2) NOT NULL,
+  company_providing_services_for TEXT,
   created_at TIMESTAMP NOT NULL DEFAULT NOW(),
   version INTEGER NOT NULL DEFAULT 1,
   is_locked BOOLEAN NOT NULL DEFAULT TRUE

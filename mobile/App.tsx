@@ -23,11 +23,14 @@ import { SnapshotCard } from "./src/components/SnapshotCard";
 import { FormSection } from "./src/components/FormSection";
 import { colors, motion, radius, spacing, typography } from "./src/theme/tokens";
 
-const API_BASE_URL = "http://localhost:4000";
+const runtimeApiBaseUrl = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env
+  ?.EXPO_PUBLIC_API_BASE_URL;
+const API_BASE_URL = runtimeApiBaseUrl || "http://localhost:4000";
 const QUICK_STATE_KEY = "weekly-tax-app:quick-state:v1";
 const AUTH_STATE_KEY = "weekly-tax-app:auth-state:v1";
 
 type Screen = "week" | "summary" | "export" | "admin" | "guide";
+type EntryMode = "weekly" | "daily";
 
 type AuthUser = {
   id: string;
@@ -59,6 +62,13 @@ type RuleMonitoringResponse = {
     created_by: string | null;
   };
   available_versions: number[];
+  review: {
+    status: "ok" | "review";
+    checked_at: string;
+    message: string;
+    signals: string[];
+    source_reference: string | null;
+  };
 };
 
 type RuleAuditEvent = {
@@ -76,13 +86,19 @@ export default function App(): React.JSX.Element {
 
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
-  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [authMode, setAuthMode] = useState<"login" | "register" | "reset">("login");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authPasswordConfirm, setAuthPasswordConfirm] = useState("");
+  const [resetCode, setResetCode] = useState("");
+  const [resetCodePreview, setResetCodePreview] = useState<string | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(false);
+  const [isRequestingReset, setIsRequestingReset] = useState(false);
 
+  const [entryMode, setEntryMode] = useState<EntryMode>("weekly");
+  const [entryDate, setEntryDate] = useState("2026-04-06");
   const [weekStartDate, setWeekStartDate] = useState("2026-04-06");
+  const [serviceCompany, setServiceCompany] = useState("");
   const [income, setIncome] = useState("950");
 
   const [fuel, setFuel] = useState("0");
@@ -141,6 +157,7 @@ export default function App(): React.JSX.Element {
 
   const contentOpacity = useRef(new Animated.Value(1)).current;
   const statusPulse = useRef(new Animated.Value(1)).current;
+  const canUseNativeDriver = Platform.OS !== "web";
 
   const expenses = useMemo(
     () => [
@@ -181,6 +198,19 @@ export default function App(): React.JSX.Element {
     return `£${estimatedTax.toFixed(2)}`;
   }, [estimatedTax]);
 
+  const resolvedWeekStart = useMemo(
+    () => (entryMode === "daily" ? getWeekStartFromDate(entryDate) : weekStartDate),
+    [entryDate, entryMode, weekStartDate]
+  );
+
+  const isAdmin = authUser?.role === "admin";
+
+  useEffect(() => {
+    if (!isAdmin && screen === "admin") {
+      setScreen("week");
+    }
+  }, [isAdmin, screen]);
+
   useEffect(() => {
     void (async () => {
       try {
@@ -193,6 +223,9 @@ export default function App(): React.JSX.Element {
           const quick = JSON.parse(quickRaw) as {
             taxYear?: string;
             weekStartDate?: string;
+            entryMode?: EntryMode;
+            entryDate?: string;
+            serviceCompany?: string;
           };
 
           if (quick.taxYear) {
@@ -200,6 +233,15 @@ export default function App(): React.JSX.Element {
           }
           if (quick.weekStartDate) {
             setWeekStartDate(quick.weekStartDate);
+          }
+          if (quick.entryMode) {
+            setEntryMode(quick.entryMode);
+          }
+          if (quick.entryDate) {
+            setEntryDate(quick.entryDate);
+          }
+          if (quick.serviceCompany) {
+            setServiceCompany(quick.serviceCompany);
           }
         }
 
@@ -231,12 +273,12 @@ export default function App(): React.JSX.Element {
     const timeoutId = setTimeout(() => {
       void AsyncStorage.setItem(
         QUICK_STATE_KEY,
-        JSON.stringify({ taxYear, weekStartDate })
+        JSON.stringify({ taxYear, weekStartDate, entryMode, entryDate, serviceCompany })
       );
     }, 300);
 
     return () => clearTimeout(timeoutId);
-  }, [isBootstrappingState, taxYear, weekStartDate]);
+  }, [isBootstrappingState, taxYear, weekStartDate, entryMode, entryDate, serviceCompany]);
 
   useEffect(() => {
     Animated.sequence([
@@ -244,13 +286,13 @@ export default function App(): React.JSX.Element {
         toValue: 0.78,
         duration: motion.quick,
         easing: Easing.out(Easing.cubic),
-        useNativeDriver: true
+        useNativeDriver: canUseNativeDriver
       }),
       Animated.timing(contentOpacity, {
         toValue: 1,
         duration: motion.normal,
         easing: Easing.inOut(Easing.cubic),
-        useNativeDriver: true
+        useNativeDriver: canUseNativeDriver
       })
     ]).start();
   }, [contentOpacity, screen]);
@@ -264,22 +306,40 @@ export default function App(): React.JSX.Element {
       Animated.timing(statusPulse, {
         toValue: 1.03,
         duration: motion.pulseIn,
-        useNativeDriver: true
+        useNativeDriver: canUseNativeDriver
       }),
       Animated.timing(statusPulse, {
         toValue: 1,
         duration: motion.pulseOut,
-        useNativeDriver: true
+        useNativeDriver: canUseNativeDriver
       })
     ]).start();
   }, [status, statusPulse]);
+
+  function getWeekStartFromDate(value: string): string {
+    const date = new Date(`${value}T00:00:00Z`);
+    if (Number.isNaN(date.getTime())) {
+      return value;
+    }
+
+    const utcDay = date.getUTCDay();
+    const offset = utcDay === 0 ? -6 : 1 - utcDay;
+    date.setUTCDate(date.getUTCDate() + offset);
+    return date.toISOString().slice(0, 10);
+  }
 
   function setThisMonday(): void {
     const now = new Date();
     const utcDay = now.getUTCDay();
     const offset = utcDay === 0 ? -6 : 1 - utcDay;
     now.setUTCDate(now.getUTCDate() + offset);
+    setEntryMode("weekly");
     setWeekStartDate(now.toISOString().slice(0, 10));
+  }
+
+  function setToday(): void {
+    setEntryMode("daily");
+    setEntryDate(new Date().toISOString().slice(0, 10));
   }
 
   function fillQuickExpensePreset(): void {
@@ -315,6 +375,14 @@ export default function App(): React.JSX.Element {
     });
   }
 
+  function switchAuthMode(nextMode: "login" | "register" | "reset"): void {
+    setAuthMode(nextMode);
+    setAuthPassword("");
+    setAuthPasswordConfirm("");
+    setResetCode("");
+    setResetCodePreview(null);
+  }
+
   async function saveAuthState(token: string, user: AuthUser): Promise<void> {
     setAuthToken(token);
     setAuthUser(user);
@@ -327,6 +395,8 @@ export default function App(): React.JSX.Element {
     setAuthEmail("");
     setAuthPassword("");
     setAuthPasswordConfirm("");
+    setResetCode("");
+    setResetCodePreview(null);
     setCurrentWeekId(null);
     setReceipts([]);
     await AsyncStorage.removeItem(AUTH_STATE_KEY);
@@ -455,7 +525,99 @@ export default function App(): React.JSX.Element {
     }
   }
 
+  async function requestPasswordReset(): Promise<void> {
+    if (!authEmail.trim()) {
+      Alert.alert("Validation", "Enter your email first.");
+      return;
+    }
+
+    setIsRequestingReset(true);
+    setStatus({ kind: "info", text: "Requesting reset code..." });
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/forgot-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: authEmail.trim() })
+      });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        Alert.alert("Reset error", payload.error || "Could not start password reset.");
+        setStatus({ kind: "error", text: payload.error || "Could not start password reset." });
+        return;
+      }
+
+      if (payload.reset_code_preview) {
+        setResetCode(payload.reset_code_preview);
+        setResetCodePreview(payload.reset_code_preview);
+        Alert.alert("Reset code", `Use this code: ${payload.reset_code_preview}`);
+      }
+
+      setStatus({ kind: "info", text: payload.message || "Reset code generated." });
+    } catch (error) {
+      Alert.alert("Network error", String(error));
+      setStatus({ kind: "error", text: "Network error while requesting reset code." });
+    } finally {
+      setIsRequestingReset(false);
+    }
+  }
+
+  async function submitPasswordReset(): Promise<void> {
+    if (!authEmail.trim() || !resetCode.trim() || !authPassword.trim()) {
+      Alert.alert("Validation", "Email, reset code, and new password are required.");
+      return;
+    }
+
+    if (authPassword.length < 8) {
+      Alert.alert("Validation", "New password must be at least 8 characters.");
+      return;
+    }
+
+    if (authPassword !== authPasswordConfirm) {
+      Alert.alert("Validation", "Password confirmation does not match.");
+      return;
+    }
+
+    setIsAuthLoading(true);
+    setStatus({ kind: "info", text: "Updating password..." });
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/reset-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: authEmail.trim(),
+          code: resetCode.trim(),
+          new_password: authPassword
+        })
+      });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        Alert.alert("Reset error", payload.error || "Password reset failed.");
+        setStatus({ kind: "error", text: payload.error || "Password reset failed." });
+        return;
+      }
+
+      setResetCode("");
+      setResetCodePreview(null);
+      await saveAuthState(payload.token, payload.user as AuthUser);
+      setStatus({ kind: "info", text: "Password updated and you are now signed in." });
+    } catch (error) {
+      Alert.alert("Network error", String(error));
+      setStatus({ kind: "error", text: "Network error during password reset." });
+    } finally {
+      setIsAuthLoading(false);
+    }
+  }
+
   async function submitAuth(): Promise<void> {
+    if (authMode === "reset") {
+      await submitPasswordReset();
+      return;
+    }
+
     if (!authEmail.trim() || !authPassword.trim()) {
       Alert.alert("Validation", "Email and password are required.");
       return;
@@ -504,9 +666,17 @@ export default function App(): React.JSX.Element {
       return;
     }
 
-    if (!isDate(weekStartDate)) {
-      Alert.alert("Validation", "Week start date must be in YYYY-MM-DD format.");
-      setStatus({ kind: "error", text: "Week start date format is invalid." });
+    const effectiveDate = entryMode === "daily" ? entryDate : weekStartDate;
+    const effectiveWeekStartDate = entryMode === "daily" ? getWeekStartFromDate(entryDate) : weekStartDate;
+
+    if (!isDate(effectiveDate)) {
+      Alert.alert(
+        "Validation",
+        entryMode === "daily"
+          ? "Entry date must be in YYYY-MM-DD format."
+          : "Week start date must be in YYYY-MM-DD format."
+      );
+      setStatus({ kind: "error", text: "Date format is invalid." });
       return;
     }
 
@@ -517,22 +687,23 @@ export default function App(): React.JSX.Element {
     }
 
     setIsSavingWeek(true);
-    setStatus({ kind: "info", text: "Saving weekly entry..." });
+    setStatus({ kind: "info", text: entryMode === "daily" ? "Saving daily entry..." : "Saving weekly entry..." });
 
     try {
       const response = await authedFetch("/weekly-entry", {
         method: "POST",
         body: JSON.stringify({
-          week_start_date: weekStartDate,
+          week_start_date: effectiveWeekStartDate,
           income_total: Number(income || 0),
+          company_providing_services_for: serviceCompany.trim() || null,
           expenses
         })
       });
 
       const payload = await response.json();
       if (!response.ok) {
-        Alert.alert("Error", payload.error || "Failed to submit weekly entry");
-        setStatus({ kind: "error", text: payload.error || "Failed to submit weekly entry." });
+        Alert.alert("Error", payload.error || "Failed to submit entry");
+        setStatus({ kind: "error", text: payload.error || "Failed to submit entry." });
         return;
       }
 
@@ -543,11 +714,22 @@ export default function App(): React.JSX.Element {
         await loadReceipts(payload.weekly_entry_id);
       }
       setLastSavedAt(new Date().toLocaleTimeString());
-      setStatus({ kind: "info", text: "Entry saved and locked with timestamp." });
-      Alert.alert("Saved", "Weekly entry locked and recorded.");
+      setStatus({
+        kind: "info",
+        text:
+          entryMode === "daily"
+            ? `Daily entry saved into week starting ${effectiveWeekStartDate}.`
+            : "Weekly entry saved and locked with timestamp."
+      });
+      Alert.alert(
+        "Saved",
+        entryMode === "daily"
+          ? `Daily entry recorded for ${effectiveDate}.`
+          : "Weekly entry locked and recorded."
+      );
     } catch (error) {
       Alert.alert("Network error", String(error));
-      setStatus({ kind: "error", text: "Network error while saving weekly entry." });
+      setStatus({ kind: "error", text: "Network error while saving entry." });
     } finally {
       setIsSavingWeek(false);
     }
@@ -804,22 +986,68 @@ export default function App(): React.JSX.Element {
           >
             <Card>
               <Text style={styles.authTitle}>Account Access</Text>
-              <Text style={styles.noteText}>Create your account or sign in to access weekly tax records.</Text>
+              <Text style={styles.noteText}>
+                {authMode === "reset"
+                  ? "Request a reset code and choose a new password."
+                  : "Create your account or sign in to access weekly tax records."}
+              </Text>
 
               <Field label="Email" value={authEmail} onChange={setAuthEmail} placeholder="you@example.com" />
-              <Field
-                label="Password"
-                value={authPassword}
-                onChange={setAuthPassword}
-                placeholder="At least 8 characters"
-              />
-              {authMode === "register" && (
-                <Field
-                  label="Confirm Password"
-                  value={authPasswordConfirm}
-                  onChange={setAuthPasswordConfirm}
-                  placeholder="Repeat your password"
-                />
+
+              {authMode === "reset" ? (
+                <>
+                  <Pressable
+                    onPress={requestPasswordReset}
+                    style={[styles.primaryButton, isRequestingReset && styles.buttonDisabled]}
+                    disabled={isRequestingReset}
+                  >
+                    {isRequestingReset ? (
+                      <ActivityIndicator color={colors.accentText} />
+                    ) : (
+                      <Text style={styles.primaryButtonText}>Send Reset Code</Text>
+                    )}
+                  </Pressable>
+
+                  {!!resetCodePreview && (
+                    <Text style={styles.noteText}>Reset code ready. Use the alert code to continue.</Text>
+                  )}
+
+                  <Field
+                    label="Reset Code"
+                    value={resetCode}
+                    onChange={setResetCode}
+                    placeholder="6-digit code"
+                  />
+                  <Field
+                    label="New Password"
+                    value={authPassword}
+                    onChange={setAuthPassword}
+                    placeholder="At least 8 characters"
+                  />
+                  <Field
+                    label="Confirm New Password"
+                    value={authPasswordConfirm}
+                    onChange={setAuthPasswordConfirm}
+                    placeholder="Repeat your new password"
+                  />
+                </>
+              ) : (
+                <>
+                  <Field
+                    label="Password"
+                    value={authPassword}
+                    onChange={setAuthPassword}
+                    placeholder="At least 8 characters"
+                  />
+                  {authMode === "register" && (
+                    <Field
+                      label="Confirm Password"
+                      value={authPasswordConfirm}
+                      onChange={setAuthPasswordConfirm}
+                      placeholder="Repeat your password"
+                    />
+                  )}
+                </>
               )}
 
               <Pressable
@@ -831,19 +1059,31 @@ export default function App(): React.JSX.Element {
                   <ActivityIndicator color={colors.accentText} />
                 ) : (
                   <Text style={styles.primaryButtonText}>
-                    {authMode === "register" ? "Create Account" : "Sign In"}
+                    {authMode === "register"
+                      ? "Create Account"
+                      : authMode === "reset"
+                        ? "Update Password"
+                        : "Sign In"}
                   </Text>
                 )}
               </Pressable>
 
+              {authMode === "login" && (
+                <Pressable onPress={() => switchAuthMode("reset")} style={styles.switchModeButton}>
+                  <Text style={styles.switchModeText}>Forgot password?</Text>
+                </Pressable>
+              )}
+
               <Pressable
-                onPress={() => setAuthMode(authMode === "register" ? "login" : "register")}
+                onPress={() => switchAuthMode(authMode === "register" ? "login" : "register")}
                 style={styles.switchModeButton}
               >
                 <Text style={styles.switchModeText}>
                   {authMode === "register"
                     ? "Already have an account? Sign in"
-                    : "Need an account? Register"}
+                    : authMode === "reset"
+                      ? "Back to sign in"
+                      : "Need an account? Register"}
                 </Text>
               </Pressable>
             </Card>
@@ -856,7 +1096,7 @@ export default function App(): React.JSX.Element {
           </Animated.ScrollView>
         ) : (
           <>
-            <AppHeader screen={screen} onChange={setScreen} />
+            <AppHeader screen={screen} onChange={setScreen} isAdmin={isAdmin} />
 
             <Animated.ScrollView
               style={{ opacity: contentOpacity }}
@@ -887,18 +1127,54 @@ export default function App(): React.JSX.Element {
               )}
 
               {screen === "week" && (
-                <FormSection title="This Week">
+                <FormSection title={entryMode === "daily" ? "Daily Entry" : "This Week"}>
                   <View style={styles.quickActionsRow}>
-                    <SmallAction label="Use This Monday" onPress={setThisMonday} />
+                    <SmallAction label="Weekly Mode" onPress={() => setEntryMode("weekly")} />
+                    <SmallAction label="Daily Mode" onPress={() => setEntryMode("daily")} />
+                  </View>
+                  <Text style={styles.noteText}>
+                    {entryMode === "daily"
+                      ? `Daily entries roll into the week starting ${resolvedWeekStart}.`
+                      : "Weekly mode records the full week in one submission."}
+                  </Text>
+                  <View style={styles.quickActionsRow}>
+                    {entryMode === "daily" ? (
+                      <SmallAction label="Use Today" onPress={setToday} />
+                    ) : (
+                      <SmallAction label="Use This Monday" onPress={setThisMonday} />
+                    )}
                     <SmallAction label="Fill Typical Expenses" onPress={fillQuickExpensePreset} />
                   </View>
+                  {entryMode === "daily" ? (
+                    <>
+                      <Field
+                        label="Entry Date (YYYY-MM-DD)"
+                        value={entryDate}
+                        onChange={setEntryDate}
+                        placeholder="2026-04-06"
+                      />
+                      <Text style={styles.noteText}>Weekly bucket: {resolvedWeekStart}</Text>
+                    </>
+                  ) : (
+                    <Field
+                      label="Week Start Date (YYYY-MM-DD)"
+                      value={weekStartDate}
+                      onChange={setWeekStartDate}
+                      placeholder="2026-04-06"
+                    />
+                  )}
                   <Field
-                    label="Week Start Date (YYYY-MM-DD)"
-                    value={weekStartDate}
-                    onChange={setWeekStartDate}
-                    placeholder="2026-04-06"
+                    label="Company providing services for"
+                    value={serviceCompany}
+                    onChange={setServiceCompany}
+                    placeholder="Agency, operator or platform"
                   />
-                  <Field label="Income (£)" value={income} onChange={setIncome} keyboardType="decimal-pad" />
+                  <Field
+                    label={entryMode === "daily" ? "Income for this day (£)" : "Income (£)"}
+                    value={income}
+                    onChange={setIncome}
+                    keyboardType="decimal-pad"
+                  />
 
                   <Text style={styles.subSection}>Expenses</Text>
                   <Field label="Fuel (£)" value={fuel} onChange={setFuel} keyboardType="decimal-pad" />
@@ -915,7 +1191,7 @@ export default function App(): React.JSX.Element {
                   <View style={styles.previewRow}>
                     <PreviewPill label="Gross expenses" value={expensePreview.totalGross} />
                     <PreviewPill label="Claimable" value={expensePreview.totalClaimable} />
-                    <PreviewPill label="Weekly profit" value={expensePreview.profit} />
+                    <PreviewPill label={entryMode === "daily" ? "Daily profit" : "Weekly profit"} value={expensePreview.profit} />
                   </View>
 
                   <Pressable
@@ -926,7 +1202,7 @@ export default function App(): React.JSX.Element {
                     {isSavingWeek ? (
                       <ActivityIndicator color={colors.accentText} />
                     ) : (
-                      <Text style={styles.primaryButtonText}>Save Weekly Entry</Text>
+                      <Text style={styles.primaryButtonText}>{entryMode === "daily" ? "Save Daily Entry" : "Save Weekly Entry"}</Text>
                     )}
                   </Pressable>
 
@@ -982,7 +1258,11 @@ export default function App(): React.JSX.Element {
                     )}
                   </View>
 
-                  <Text style={styles.noteText}>Estimate only. Final liability depends on full-year position.</Text>
+                  <Text style={styles.noteText}>
+                    {entryMode === "daily"
+                      ? "Daily entries feed the same weekly and annual tax estimate view."
+                      : "Estimate only. Final liability depends on full-year position."}
+                  </Text>
                 </FormSection>
               )}
 
@@ -1040,7 +1320,7 @@ export default function App(): React.JSX.Element {
                 </FormSection>
               )}
 
-              {screen === "admin" && (
+              {screen === "admin" && isAdmin && (
                 <FormSection title="Admin Tooling">
                   <Text style={styles.noteText}>Use this section to monitor and publish HMRC rule versions.</Text>
                   <Field label="Tax Year (YYYY-YY)" value={taxYear} onChange={setTaxYear} />
@@ -1083,6 +1363,11 @@ export default function App(): React.JSX.Element {
                         Source: {monitoringData.active_rule_set.source_reference || "Not set"}
                       </Text>
                       <Text style={styles.noteText}>Versions: {monitoringData.available_versions.join(", ")}</Text>
+                      <Text style={styles.noteText}>Rule review: {monitoringData.review.status}</Text>
+                      <Text style={styles.noteText}>{monitoringData.review.message}</Text>
+                      {monitoringData.review.signals.map((signal) => (
+                        <Text key={signal} style={styles.noteText}>• {signal}</Text>
+                      ))}
                     </View>
                   )}
 
