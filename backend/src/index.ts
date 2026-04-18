@@ -73,7 +73,7 @@ const receiptDownloadTtlSeconds = 15 * 60;
 const passwordResetTtlMinutes = Math.max(5, Number(process.env.PASSWORD_RESET_TTL_MINUTES || 15));
 const twoFactorChallengeTtlMinutes = Math.max(5, Number(process.env.TWO_FACTOR_CHALLENGE_TTL_MINUTES || 10));
 const twoFactorTimeStepSeconds = 30;
-const twoFactorAppName = "Weekly Tax App";
+const twoFactorAppName = "Qbit";
 const allowPasswordResetCodePreview = process.env.NODE_ENV !== "production";
 const allowedReceiptMimeTypes = new Set([
   "application/pdf",
@@ -119,6 +119,8 @@ const expenseSchema = z.object({
 
 const weeklyEntrySchema = z.object({
   week_start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  entry_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  entry_mode: z.enum(["weekly", "daily"]).default("weekly"),
   income_total: z.number().min(0),
   company_providing_services_for: z.string().max(200).nullable().optional(),
   expenses: z.array(expenseSchema).default([])
@@ -260,6 +262,22 @@ function safeSecretMatch(expected: string, provided: string): boolean {
   }
 
   return crypto.timingSafeEqual(expectedBuffer, providedBuffer);
+}
+
+function getTodayIsoDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function getWeekStartFromIsoDate(value: string): string {
+  const date = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  const utcDay = date.getUTCDay();
+  const offset = utcDay === 0 ? -6 : 1 - utcDay;
+  date.setUTCDate(date.getUTCDate() + offset);
+  return date.toISOString().slice(0, 10);
 }
 
 function signToken(userId: string): string {
@@ -844,6 +862,40 @@ app.get("/auth/me", requireAuth, async (req: Request, res: Response) => {
   }
 });
 
+app.get("/entry-mode-lock/:weekStartDate", requireAuth, async (req: Request, res: Response) => {
+  const authReq = req as AuthenticatedRequest;
+  const weekStartDate = String(req.params.weekStartDate ?? "").trim();
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(weekStartDate)) {
+    return res.status(400).json({ error: "Week start date must be in YYYY-MM-DD format." });
+  }
+
+  try {
+    const result = await db.query<{ entry_mode: string; entry_date: string | null }>(
+      `SELECT COALESCE(NULLIF(entry_mode, ''), 'weekly') AS entry_mode,
+              entry_date::text
+       FROM weekly_entries
+       WHERE user_id = $1 AND week_start_date = $2
+       ORDER BY created_at DESC`,
+      [authReq.userId, weekStartDate]
+    );
+
+    if (result.rows.length === 0) {
+      return res.json({ locked: false, week_start_date: weekStartDate });
+    }
+
+    const lockedMode = result.rows[0].entry_mode === "daily" ? "daily" : "weekly";
+    return res.json({
+      locked: true,
+      locked_mode: lockedMode,
+      week_start_date: weekStartDate,
+      existing_entry_dates: result.rows.map((row) => row.entry_date).filter(Boolean)
+    });
+  } catch (error) {
+    return sendError(res, 500, "Failed to load week mode lock", error);
+  }
+});
+
 app.post("/weekly-entry", requireAuth, async (req: Request, res: Response) => {
   const parsed = weeklyEntrySchema.safeParse(req.body);
   if (!parsed.success) {
@@ -853,6 +905,16 @@ app.post("/weekly-entry", requireAuth, async (req: Request, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const payload = parsed.data;
   const taxYear = getTaxYearFromDate(payload.week_start_date);
+  const entryMode = payload.entry_mode;
+  const entryDate = payload.entry_date ?? payload.week_start_date;
+
+  if (entryDate > getTodayIsoDate()) {
+    return res.status(400).json({ error: "Entry date cannot be in the future." });
+  }
+
+  if (entryMode === "daily" && getWeekStartFromIsoDate(entryDate) !== payload.week_start_date) {
+    return res.status(400).json({ error: "Daily entry date must belong to the selected week bucket." });
+  }
 
   let totalNetExpenses = 0;
   let totalExpenseAmount = 0;
@@ -875,15 +937,59 @@ app.post("/weekly-entry", requireAuth, async (req: Request, res: Response) => {
   try {
     await client.query("BEGIN");
 
-    const weeklyInsert = await client.query<{ id: string }>(
+    const existingEntries = await client.query<{ entry_mode: string; entry_date: string | null }>(
+      `SELECT COALESCE(NULLIF(entry_mode, ''), 'weekly') AS entry_mode,
+              entry_date::text
+       FROM weekly_entries
+       WHERE user_id = $1 AND week_start_date = $2
+       ORDER BY created_at DESC
+       FOR UPDATE`,
+      [authReq.userId, payload.week_start_date]
+    );
+
+    if (existingEntries.rows.length > 0) {
+      const lockedMode = existingEntries.rows[0].entry_mode === "daily" ? "daily" : "weekly";
+
+      if (lockedMode !== entryMode) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({
+          error: `This week is already locked to ${lockedMode} mode. You can switch again next week.`,
+          locked_mode: lockedMode,
+          week_start_date: payload.week_start_date
+        });
+      }
+
+      if (entryMode === "weekly") {
+        await client.query("ROLLBACK");
+        return res.status(409).json({
+          error: "A weekly entry has already been recorded for this week and is locked.",
+          locked_mode: lockedMode,
+          week_start_date: payload.week_start_date
+        });
+      }
+
+      if (entryMode === "daily" && existingEntries.rows.some((row) => row.entry_date === entryDate)) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({
+          error: "A daily entry for this date has already been recorded and is locked.",
+          locked_mode: lockedMode,
+          week_start_date: payload.week_start_date,
+          entry_date: entryDate
+        });
+      }
+    }
+
+    const weeklyInsert = await client.query<{ id: string; created_at: string }>(
       `INSERT INTO weekly_entries (
-         user_id, week_start_date, tax_year, income_total, company_providing_services_for, created_at, version, is_locked
+         user_id, week_start_date, entry_date, entry_mode, tax_year, income_total, company_providing_services_for, created_at, version, is_locked
        )
-       VALUES ($1, $2, $3, $4, $5, NOW(), 1, TRUE)
-       RETURNING id`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), 1, TRUE)
+       RETURNING id, created_at::text`,
       [
         authReq.userId,
         payload.week_start_date,
+        entryDate,
+        entryMode,
         taxYear,
         payload.income_total,
         payload.company_providing_services_for?.trim() || null
@@ -905,8 +1011,9 @@ app.post("/weekly-entry", requireAuth, async (req: Request, res: Response) => {
 
     await client.query("COMMIT");
 
-    const allWeeksForYear = await db.query<{ income: string; expenses: string }>(
-      `SELECT we.income_total::text AS income,
+    const allWeeksForYear = await db.query<{ week_start_date: string; income: string; expenses: string }>(
+      `SELECT we.week_start_date::text AS week_start_date,
+              we.income_total::text AS income,
               COALESCE(SUM(e.net_amount), 0)::text AS expenses
        FROM weekly_entries we
        LEFT JOIN expenses e ON e.weekly_entry_id = we.id
@@ -915,6 +1022,7 @@ app.post("/weekly-entry", requireAuth, async (req: Request, res: Response) => {
       [authReq.userId, taxYear]
     );
 
+    const weeksLogged = new Set(allWeeksForYear.rows.map((row) => row.week_start_date)).size;
     const annualIncome =
       allWeeksForYear.rows.reduce((sum: number, row: { income: string; expenses: string }) => sum + Number(row.income), 0) +
       excessReimbursement;
@@ -927,12 +1035,12 @@ app.post("/weekly-entry", requireAuth, async (req: Request, res: Response) => {
     const rules = await getRulesForTaxYear(taxYear);
     const estimate = calculateTaxEstimate({
       annualProfit,
-      weeksLogged: allWeeksForYear.rows.length,
+      weeksLogged,
       rules
     });
     const warnings = generateComplianceWarnings({
       annualProfit,
-      weeksLogged: allWeeksForYear.rows.length,
+      weeksLogged,
       totalExpenseAmount,
       totalReimbursedAmount,
       hasFoodExpense: payload.expenses.some((expense) => expense.category.toLowerCase() === "food"),
@@ -967,6 +1075,9 @@ app.post("/weekly-entry", requireAuth, async (req: Request, res: Response) => {
 
     return res.status(201).json({
       weekly_entry_id: weeklyEntryId,
+      submitted_at: weeklyInsert.rows[0].created_at,
+      entry_mode: entryMode,
+      entry_date: entryDate,
       tax_year: taxYear,
       weekly_profit: Number(weeklyProfit.toFixed(2)),
       excess_reimbursement_added_to_income: Number(excessReimbursement.toFixed(2)),
@@ -1390,36 +1501,60 @@ app.post("/rules/:taxYear/publish", requireAuth, requireAdmin, adminRateLimit, a
 app.get("/summary/:taxYear", requireAuth, async (req: Request, res: Response) => {
   const taxYear = req.params.taxYear;
   const authReq = req as AuthenticatedRequest;
+  const asOfDateRaw = String(req.query.as_of ?? "").trim();
+
+  if (asOfDateRaw && !/^\d{4}-\d{2}-\d{2}$/.test(asOfDateRaw)) {
+    return res.status(400).json({ error: "as_of must be in YYYY-MM-DD format" });
+  }
+
+  const asOfDate = asOfDateRaw || null;
 
   try {
-    const result = await db.query<{
-      total_income: string;
-      total_expenses: string;
-      net_profit: string;
-      estimated_income_tax: string;
-      estimated_ni: string;
-      updated_at: string;
+    const rows = await db.query<{
+      week_start_date: string;
+      created_at: string;
+      income: string;
+      expenses: string;
     }>(
-      `SELECT total_income::text, total_expenses::text, net_profit::text,
-              estimated_income_tax::text, estimated_ni::text, updated_at::text
-       FROM tax_summaries
-       WHERE user_id = $1 AND tax_year = $2`,
-      [authReq.userId, taxYear]
+      `SELECT we.week_start_date::text,
+              we.created_at::text,
+              we.income_total::text AS income,
+              COALESCE(SUM(e.net_amount), 0)::text AS expenses
+       FROM weekly_entries we
+       LEFT JOIN expenses e ON e.weekly_entry_id = we.id
+       WHERE we.user_id = $1
+         AND we.tax_year = $2
+         AND ($3::date IS NULL OR we.week_start_date <= $3::date)
+       GROUP BY we.id
+       ORDER BY we.week_start_date ASC, we.created_at ASC`,
+      [authReq.userId, taxYear, asOfDate]
     );
 
-    if (result.rows.length === 0) {
+    if (rows.rows.length === 0) {
       return res.status(404).json({ error: "No summary found" });
     }
 
-    const row = result.rows[0];
+    const totalIncome = rows.rows.reduce((sum, row) => sum + Number(row.income), 0);
+    const totalExpenses = rows.rows.reduce((sum, row) => sum + Number(row.expenses), 0);
+    const netProfit = totalIncome - totalExpenses;
+    const rules = await getRulesForTaxYear(taxYear);
+    const estimate = calculateTaxEstimate({
+      annualProfit: netProfit,
+      weeksLogged: rows.rows.length,
+      rules
+    });
+    const updatedAt = rows.rows[rows.rows.length - 1]?.created_at ?? null;
+
     return res.json({
       tax_year: taxYear,
-      total_income: Number(row.total_income),
-      total_expenses: Number(row.total_expenses),
-      net_profit: Number(row.net_profit),
-      estimated_income_tax: Number(row.estimated_income_tax),
-      estimated_ni: Number(row.estimated_ni),
-      updated_at: row.updated_at
+      as_of_date: asOfDate ?? new Date().toISOString().slice(0, 10),
+      weeks_logged: rows.rows.length,
+      total_income: Number(totalIncome.toFixed(2)),
+      total_expenses: Number(totalExpenses.toFixed(2)),
+      net_profit: Number(netProfit.toFixed(2)),
+      estimated_income_tax: Number(estimate.estimated_income_tax.toFixed(2)),
+      estimated_ni: Number(estimate.estimated_ni.toFixed(2)),
+      updated_at: updatedAt
     });
   } catch (error) {
     return sendError(res, 500, "Failed to get summary", error);
@@ -1443,13 +1578,15 @@ app.get("/tax-estimate/:weekId", requireAuth, async (req: Request, res: Response
     const { user_id: userId, tax_year: taxYear } = entry.rows[0];
 
     const allWeeks = await db.query<{
+      week_start_date: string;
       income: string;
       expenses: string;
       total_amount: string;
       reimbursed_amount: string;
       has_food_expense: boolean;
     }>(
-      `SELECT we.income_total::text AS income,
+      `SELECT we.week_start_date::text AS week_start_date,
+              we.income_total::text AS income,
               COALESCE(SUM(e.net_amount), 0)::text AS expenses,
               COALESCE(SUM(e.total_amount), 0)::text AS total_amount,
               COALESCE(SUM(e.reimbursed_amount), 0)::text AS reimbursed_amount,
@@ -1479,16 +1616,17 @@ app.get("/tax-estimate/:weekId", requireAuth, async (req: Request, res: Response
     );
     const hasFoodExpense = allWeeks.rows.some((row) => row.has_food_expense);
     const annualProfit = annualIncome - annualExpenses;
+    const weeksLogged = new Set(allWeeks.rows.map((row) => row.week_start_date)).size;
 
     const rules = await getRulesForTaxYear(taxYear);
     const estimate = calculateTaxEstimate({
       annualProfit,
-      weeksLogged: allWeeks.rows.length,
+      weeksLogged,
       rules
     });
     const warnings = generateComplianceWarnings({
       annualProfit,
-      weeksLogged: allWeeks.rows.length,
+      weeksLogged,
       totalExpenseAmount: annualExpenseAmount,
       totalReimbursedAmount: annualReimbursedAmount,
       hasFoodExpense,

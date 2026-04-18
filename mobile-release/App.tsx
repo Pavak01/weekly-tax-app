@@ -58,6 +58,13 @@ type ReceiptRecord = {
   download_url?: string;
 };
 
+type EntryModeLock = {
+  locked: boolean;
+  locked_mode?: EntryMode;
+  week_start_date: string;
+  existing_entry_dates?: string[];
+};
+
 type RuleMonitoringResponse = {
   monitored_at: string;
   tax_year: string;
@@ -111,8 +118,9 @@ export default function App(): React.JSX.Element {
   const [isLoadingTwoFactor, setIsLoadingTwoFactor] = useState(false);
 
   const [entryMode, setEntryMode] = useState<EntryMode>("weekly");
-  const [entryDate, setEntryDate] = useState("2026-04-06");
-  const [weekStartDate, setWeekStartDate] = useState("2026-04-06");
+  const [entryDate, setEntryDate] = useState(getTodayDisplayDate());
+  const [weekStartDate, setWeekStartDate] = useState(getCurrentMondayDisplayDate());
+  const [modeLock, setModeLock] = useState<EntryModeLock | null>(null);
   const [serviceCompany, setServiceCompany] = useState("");
   const [income, setIncome] = useState("950");
 
@@ -129,12 +137,16 @@ export default function App(): React.JSX.Element {
   const [estimatedTax, setEstimatedTax] = useState<number | null>(null);
 
   const [taxYear, setTaxYear] = useState("2026-27");
+  const [summaryAsOfDate, setSummaryAsOfDate] = useState(getTodayDisplayDate());
   const [summary, setSummary] = useState<null | {
+    as_of_date: string;
+    weeks_logged: number;
     total_income: number;
     total_expenses: number;
     net_profit: number;
     estimated_income_tax: number;
     estimated_ni: number;
+    updated_at?: string | null;
   }>(null);
 
   const [exportData, setExportData] = useState<string>("");
@@ -157,7 +169,7 @@ export default function App(): React.JSX.Element {
   const [rulePublishSecretInput, setRulePublishSecretInput] = useState("");
   const [monitoringData, setMonitoringData] = useState<RuleMonitoringResponse | null>(null);
   const [auditEvents, setAuditEvents] = useState<RuleAuditEvent[]>([]);
-  const [publishEffectiveFrom, setPublishEffectiveFrom] = useState("2026-04-06");
+  const [publishEffectiveFrom, setPublishEffectiveFrom] = useState(getCurrentMondayDisplayDate());
   const [publishSourceReference, setPublishSourceReference] = useState(
     "https://www.gov.uk/self-employed-national-insurance-rates"
   );
@@ -244,6 +256,46 @@ export default function App(): React.JSX.Element {
   }, [authToken, authUser]);
 
   useEffect(() => {
+    const resolvedWeekStartIso = parseDisplayDateToIso(resolvedWeekStart);
+
+    if (!authUser || !authToken || !resolvedWeekStartIso) {
+      setModeLock(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const response = await authedFetch(`/entry-mode-lock/${resolvedWeekStartIso}`);
+        const payload = (await response.json()) as EntryModeLock & { error?: string };
+
+        if (!response.ok || cancelled) {
+          return;
+        }
+
+        setModeLock(payload);
+
+        if (payload.locked && payload.locked_mode && payload.locked_mode !== entryMode) {
+          setEntryMode(payload.locked_mode);
+          setStatus({
+            kind: "info",
+            text: `This week is already locked to ${payload.locked_mode} mode.`
+          });
+        }
+      } catch {
+        if (!cancelled) {
+          setModeLock(null);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authToken, authUser, entryMode, resolvedWeekStart]);
+
+  useEffect(() => {
     void (async () => {
       try {
         const [quickRaw, authRaw] = await Promise.all([
@@ -254,6 +306,7 @@ export default function App(): React.JSX.Element {
         if (quickRaw) {
           const quick = JSON.parse(quickRaw) as {
             taxYear?: string;
+            summaryAsOfDate?: string;
             weekStartDate?: string;
             entryMode?: EntryMode;
             entryDate?: string;
@@ -263,14 +316,17 @@ export default function App(): React.JSX.Element {
           if (quick.taxYear) {
             setTaxYear(quick.taxYear);
           }
+          if (quick.summaryAsOfDate) {
+            setSummaryAsOfDate(normalizeStoredDate(quick.summaryAsOfDate, getTodayDisplayDate()));
+          }
           if (quick.weekStartDate) {
-            setWeekStartDate(quick.weekStartDate);
+            setWeekStartDate(normalizeStoredDate(quick.weekStartDate, getCurrentMondayDisplayDate()));
           }
           if (quick.entryMode) {
             setEntryMode(quick.entryMode);
           }
           if (quick.entryDate) {
-            setEntryDate(quick.entryDate);
+            setEntryDate(normalizeStoredDate(quick.entryDate, getTodayDisplayDate()));
           }
           if (quick.serviceCompany) {
             setServiceCompany(quick.serviceCompany);
@@ -305,12 +361,12 @@ export default function App(): React.JSX.Element {
     const timeoutId = setTimeout(() => {
       void AsyncStorage.setItem(
         QUICK_STATE_KEY,
-        JSON.stringify({ taxYear, weekStartDate, entryMode, entryDate, serviceCompany })
+        JSON.stringify({ taxYear, summaryAsOfDate, weekStartDate, entryMode, entryDate, serviceCompany })
       );
     }, 300);
 
     return () => clearTimeout(timeoutId);
-  }, [isBootstrappingState, taxYear, weekStartDate, entryMode, entryDate, serviceCompany]);
+  }, [isBootstrappingState, taxYear, summaryAsOfDate, weekStartDate, entryMode, entryDate, serviceCompany]);
 
   useEffect(() => {
     Animated.sequence([
@@ -348,30 +404,190 @@ export default function App(): React.JSX.Element {
     ]).start();
   }, [status, statusPulse]);
 
-  function getWeekStartFromDate(value: string): string {
-    const date = new Date(`${value}T00:00:00Z`);
-    if (Number.isNaN(date.getTime())) {
+  function pad2(value: number): string {
+    return String(value).padStart(2, "0");
+  }
+
+  function getTodayIsoDate(): string {
+    const now = new Date();
+    return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+  }
+
+  function formatIsoToDisplayDate(value: string): string {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
       return value;
     }
 
-    const utcDay = date.getUTCDay();
-    const offset = utcDay === 0 ? -6 : 1 - utcDay;
-    date.setUTCDate(date.getUTCDate() + offset);
-    return date.toISOString().slice(0, 10);
+    const [year, month, day] = value.split("-");
+    return `${day}-${month}-${year}`;
   }
 
-  function setThisMonday(): void {
+  function getTodayDisplayDate(): string {
+    return formatIsoToDisplayDate(getTodayIsoDate());
+  }
+
+  function getCurrentMondayDisplayDate(): string {
     const now = new Date();
     const utcDay = now.getUTCDay();
     const offset = utcDay === 0 ? -6 : 1 - utcDay;
     now.setUTCDate(now.getUTCDate() + offset);
-    setEntryMode("weekly");
-    setWeekStartDate(now.toISOString().slice(0, 10));
+    return formatIsoToDisplayDate(now.toISOString().slice(0, 10));
+  }
+
+  function parseDisplayDateToIso(value: string): string | null {
+    const trimmed = value.trim();
+
+    let year = 0;
+    let month = 0;
+    let day = 0;
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      [year, month, day] = trimmed.split("-").map(Number);
+    } else if (/^\d{2}-\d{2}-\d{4}$/.test(trimmed)) {
+      const [displayDay, displayMonth, displayYear] = trimmed.split("-").map(Number);
+      day = displayDay;
+      month = displayMonth;
+      year = displayYear;
+    } else {
+      return null;
+    }
+
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (
+      Number.isNaN(date.getTime()) ||
+      date.getUTCFullYear() !== year ||
+      date.getUTCMonth() + 1 !== month ||
+      date.getUTCDate() !== day
+    ) {
+      return null;
+    }
+
+    return `${year}-${pad2(month)}-${pad2(day)}`;
+  }
+
+  function normalizeDateInput(value: string): string {
+    const trimmed = value.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      return formatIsoToDisplayDate(trimmed);
+    }
+
+    const digits = trimmed.replace(/\D/g, "").slice(0, 8);
+    if (digits.length <= 2) {
+      return digits;
+    }
+    if (digits.length <= 4) {
+      return `${digits.slice(0, 2)}-${digits.slice(2)}`;
+    }
+    return `${digits.slice(0, 2)}-${digits.slice(2, 4)}-${digits.slice(4)}`;
+  }
+
+  function normalizeStoredDate(value: string, fallback: string): string {
+    const isoDate = parseDisplayDateToIso(value);
+    if (!isoDate) {
+      return fallback;
+    }
+
+    return formatIsoToDisplayDate(isoDate > getTodayIsoDate() ? getTodayIsoDate() : isoDate);
+  }
+
+  function formatAuditTimestamp(value: string): string {
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      return value;
+    }
+
+    return parsed.toLocaleString("en-GB", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit"
+    });
+  }
+
+  function getWeekStartFromDate(value: string): string {
+    const isoDate = parseDisplayDateToIso(value);
+    if (!isoDate) {
+      return value;
+    }
+
+    const date = new Date(`${isoDate}T00:00:00Z`);
+    const utcDay = date.getUTCDay();
+    const offset = utcDay === 0 ? -6 : 1 - utcDay;
+    date.setUTCDate(date.getUTCDate() + offset);
+    return formatIsoToDisplayDate(date.toISOString().slice(0, 10));
+  }
+
+  function handleEntryModeChange(nextMode: EntryMode): void {
+    if (modeLock?.locked && modeLock.locked_mode && modeLock.locked_mode !== nextMode) {
+      Alert.alert(
+        "Week locked",
+        `This week is already using ${modeLock.locked_mode} mode. The same mode will remain in effect until next week.`
+      );
+      setEntryMode(modeLock.locked_mode);
+      setStatus({ kind: "info", text: `This week is locked to ${modeLock.locked_mode} mode.` });
+      return;
+    }
+
+    setEntryMode(nextMode);
+  }
+
+  function setThisMonday(): void {
+    handleEntryModeChange("weekly");
+    setWeekStartDate(getCurrentMondayDisplayDate());
   }
 
   function setToday(): void {
-    setEntryMode("daily");
-    setEntryDate(new Date().toISOString().slice(0, 10));
+    handleEntryModeChange("daily");
+    setEntryDate(getTodayDisplayDate());
+  }
+
+  function handleEntryDateChange(value: string): void {
+    const normalized = normalizeDateInput(value);
+    const isoDate = parseDisplayDateToIso(normalized);
+    if (isoDate && isoDate > getTodayIsoDate()) {
+      setEntryDate(getTodayDisplayDate());
+      setStatus({ kind: "info", text: "Future dates are not allowed. Using today instead." });
+      return;
+    }
+
+    setEntryDate(normalized);
+  }
+
+  function handleWeekStartDateChange(value: string): void {
+    const normalized = normalizeDateInput(value);
+    const isoDate = parseDisplayDateToIso(normalized);
+    if (isoDate && isoDate > getTodayIsoDate()) {
+      setWeekStartDate(getCurrentMondayDisplayDate());
+      setStatus({ kind: "info", text: "Future dates are not allowed. Using this week instead." });
+      return;
+    }
+
+    setWeekStartDate(normalized);
+  }
+
+  function handlePublishEffectiveFromChange(value: string): void {
+    const normalized = normalizeDateInput(value);
+    const isoDate = parseDisplayDateToIso(normalized);
+    if (isoDate && isoDate > getTodayIsoDate()) {
+      setPublishEffectiveFrom(getTodayDisplayDate());
+      return;
+    }
+
+    setPublishEffectiveFrom(normalized);
+  }
+
+  function handleSummaryAsOfDateChange(value: string): void {
+    const normalized = normalizeDateInput(value);
+    const isoDate = parseDisplayDateToIso(normalized);
+    if (isoDate && isoDate > getTodayIsoDate()) {
+      setSummaryAsOfDate(getTodayDisplayDate());
+      setStatus({ kind: "info", text: "Year summary cannot go beyond today." });
+      return;
+    }
+
+    setSummaryAsOfDate(normalized);
   }
 
   function fillQuickExpensePreset(): void {
@@ -386,7 +602,7 @@ export default function App(): React.JSX.Element {
   }
 
   function isDate(value: string): boolean {
-    return /^\d{4}-\d{2}-\d{2}$/.test(value);
+    return parseDisplayDateToIso(value) !== null;
   }
 
   function isTaxYear(value: string): boolean {
@@ -889,15 +1105,23 @@ export default function App(): React.JSX.Element {
 
     const effectiveDate = entryMode === "daily" ? entryDate : weekStartDate;
     const effectiveWeekStartDate = entryMode === "daily" ? getWeekStartFromDate(entryDate) : weekStartDate;
+    const effectiveDateIso = parseDisplayDateToIso(effectiveDate);
+    const effectiveWeekStartDateIso = parseDisplayDateToIso(effectiveWeekStartDate);
 
-    if (!isDate(effectiveDate)) {
+    if (!effectiveDateIso || !effectiveWeekStartDateIso) {
       Alert.alert(
         "Validation",
         entryMode === "daily"
-          ? "Entry date must be in YYYY-MM-DD format."
-          : "Week start date must be in YYYY-MM-DD format."
+          ? "Entry date must be in DD-MM-YYYY format."
+          : "Week start date must be in DD-MM-YYYY format."
       );
       setStatus({ kind: "error", text: "Date format is invalid." });
+      return;
+    }
+
+    if (effectiveDateIso > getTodayIsoDate() || effectiveWeekStartDateIso > getTodayIsoDate()) {
+      Alert.alert("Validation", "Future dates are not allowed.");
+      setStatus({ kind: "error", text: "Entry date cannot be beyond today." });
       return;
     }
 
@@ -914,7 +1138,9 @@ export default function App(): React.JSX.Element {
       const response = await authedFetch("/weekly-entry", {
         method: "POST",
         body: JSON.stringify({
-          week_start_date: effectiveWeekStartDate,
+          week_start_date: effectiveWeekStartDateIso,
+          entry_date: effectiveDateIso,
+          entry_mode: entryMode,
           income_total: Number(income || 0),
           company_providing_services_for: serviceCompany.trim() || null,
           expenses
@@ -923,6 +1149,15 @@ export default function App(): React.JSX.Element {
 
       const payload = await response.json();
       if (!response.ok) {
+        if (payload.locked_mode === "daily" || payload.locked_mode === "weekly") {
+          setModeLock({
+            locked: true,
+            locked_mode: payload.locked_mode,
+            week_start_date: payload.week_start_date || effectiveWeekStartDateIso
+          });
+          setEntryMode(payload.locked_mode);
+        }
+
         Alert.alert("Error", payload.error || "Failed to submit entry");
         setStatus({ kind: "error", text: payload.error || "Failed to submit entry." });
         return;
@@ -930,11 +1165,17 @@ export default function App(): React.JSX.Element {
 
       setSetAside(payload.estimate.total_to_set_aside ?? 0);
       setEstimatedTax((payload.estimate.estimated_income_tax ?? 0) + (payload.estimate.estimated_ni ?? 0));
+      setModeLock({
+        locked: true,
+        locked_mode: entryMode,
+        week_start_date: effectiveWeekStartDateIso,
+        existing_entry_dates: entryMode === "daily" ? [effectiveDateIso] : [effectiveWeekStartDateIso]
+      });
       setCurrentWeekId(payload.weekly_entry_id ?? null);
       if (payload.weekly_entry_id) {
         await loadReceipts(payload.weekly_entry_id);
       }
-      setLastSavedAt(new Date().toLocaleTimeString());
+      setLastSavedAt(formatAuditTimestamp(payload.submitted_at || new Date().toISOString()));
       setStatus({
         kind: "info",
         text:
@@ -968,11 +1209,24 @@ export default function App(): React.JSX.Element {
       return;
     }
 
+    const asOfDateIso = parseDisplayDateToIso(summaryAsOfDate);
+    if (!asOfDateIso) {
+      Alert.alert("Validation", "Summary snapshot date must be in DD-MM-YYYY format.");
+      setStatus({ kind: "error", text: "Summary snapshot date is invalid." });
+      return;
+    }
+
+    if (asOfDateIso > getTodayIsoDate()) {
+      Alert.alert("Validation", "Summary snapshot date cannot be in the future.");
+      setStatus({ kind: "error", text: "Summary snapshot date cannot be beyond today." });
+      return;
+    }
+
     setIsLoadingSummary(true);
-    setStatus({ kind: "info", text: "Loading year summary..." });
+    setStatus({ kind: "info", text: `Loading year snapshot up to ${summaryAsOfDate}...` });
 
     try {
-      const response = await authedFetch(`/summary/${taxYear}`);
+      const response = await authedFetch(`/summary/${taxYear}?as_of=${encodeURIComponent(asOfDateIso)}`);
       const payload = await response.json();
       if (!response.ok) {
         Alert.alert("Error", payload.error || "Failed to fetch summary");
@@ -980,8 +1234,17 @@ export default function App(): React.JSX.Element {
         return;
       }
 
-      setSummary(payload);
-      setStatus({ kind: "info", text: "Summary loaded." });
+      setSummary({
+        as_of_date: payload.as_of_date || asOfDateIso,
+        weeks_logged: Number(payload.weeks_logged ?? 0),
+        total_income: Number(payload.total_income ?? 0),
+        total_expenses: Number(payload.total_expenses ?? 0),
+        net_profit: Number(payload.net_profit ?? 0),
+        estimated_income_tax: Number(payload.estimated_income_tax ?? 0),
+        estimated_ni: Number(payload.estimated_ni ?? 0),
+        updated_at: payload.updated_at ?? null
+      });
+      setStatus({ kind: "info", text: `Year snapshot loaded up to ${summaryAsOfDate}.` });
     } catch (error) {
       Alert.alert("Network error", String(error));
       setStatus({ kind: "error", text: "Network error while loading summary." });
@@ -990,7 +1253,65 @@ export default function App(): React.JSX.Element {
     }
   }
 
-  async function fetchExport(): Promise<void> {
+  async function saveCsvExport(
+    csvText: string,
+    year: string,
+    action: "download" | "share",
+    contentDisposition?: string | null
+  ): Promise<string> {
+    const fileNameMatch = /filename\s*=\s*"?([^";]+)"?/i.exec(contentDisposition ?? "");
+    const fileName = fileNameMatch?.[1] || `self-assessment-${year}.csv`;
+
+    const webDocument = (globalThis as {
+      document?: { body?: { appendChild: (node: unknown) => void } } & Record<string, any>;
+      navigator?: { share?: (data: { title?: string; text?: string }) => Promise<void> };
+    }).document;
+    const webNavigator = (globalThis as {
+      navigator?: { share?: (data: { title?: string; text?: string }) => Promise<void> };
+    }).navigator;
+
+    if (Platform.OS === "web" && webDocument) {
+      const blob = new Blob([csvText], { type: "text/csv;charset=utf-8", lastModified: Date.now() });
+      const url = URL.createObjectURL(blob);
+
+      if (action === "share" && webNavigator?.share) {
+        await webNavigator.share({
+          title: `Qbit self assessment export ${year}`,
+          text: "Your CSV export has been prepared and downloaded for sharing by email."
+        });
+      }
+
+      const link = webDocument.createElement("a");
+      link.href = url;
+      link.download = fileName;
+      webDocument.body?.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      return fileName;
+    }
+
+    const baseDir = FileSystem.documentDirectory || FileSystem.cacheDirectory;
+    if (!baseDir) {
+      return fileName;
+    }
+
+    const fileUri = `${baseDir}${fileName}`;
+    await FileSystem.writeAsStringAsync(fileUri, csvText, {
+      encoding: FileSystem.EncodingType.UTF8
+    });
+
+    if (action === "share" && (await Sharing.isAvailableAsync())) {
+      await Sharing.shareAsync(fileUri, {
+        mimeType: "text/csv",
+        dialogTitle: "Email or share export"
+      });
+    }
+
+    return fileName;
+  }
+
+  async function fetchExport(action: "download" | "share" = "download"): Promise<void> {
     if (!authUser) {
       setStatus({ kind: "error", text: "Please sign in first." });
       return;
@@ -1003,19 +1324,31 @@ export default function App(): React.JSX.Element {
     }
 
     setIsLoadingExport(true);
-    setStatus({ kind: "info", text: "Preparing export..." });
+    setStatus({ kind: "info", text: action === "share" ? "Preparing email/share export..." : "Preparing download..." });
 
     try {
-      const response = await authedFetch(`/export/${taxYear}?format=json`);
-      const payload = await response.json();
+      const response = await authedFetch(`/export/${taxYear}?format=csv`);
+      const payload = await response.text();
       if (!response.ok) {
-        Alert.alert("Error", payload.error || "Failed to export");
-        setStatus({ kind: "error", text: payload.error || "Failed to export." });
+        let errorMessage = "Failed to export.";
+        try {
+          const errorPayload = JSON.parse(payload) as { error?: string };
+          errorMessage = errorPayload.error || errorMessage;
+        } catch {
+          errorMessage = payload || errorMessage;
+        }
+
+        Alert.alert("Error", errorMessage);
+        setStatus({ kind: "error", text: errorMessage });
         return;
       }
 
-      setExportData(JSON.stringify(payload, null, 2));
-      setStatus({ kind: "info", text: "Export generated." });
+      setExportData(payload);
+      const fileName = await saveCsvExport(payload, taxYear, action, response.headers.get("content-disposition"));
+      setStatus({
+        kind: "info",
+        text: action === "share" ? `CSV ready to email/share as ${fileName}.` : `CSV downloaded as ${fileName}.`
+      });
     } catch (error) {
       Alert.alert("Network error", String(error));
       setStatus({ kind: "error", text: "Network error while exporting." });
@@ -1102,7 +1435,13 @@ export default function App(): React.JSX.Element {
     }
 
     if (!isDate(publishEffectiveFrom)) {
-      Alert.alert("Validation", "Effective from must be in YYYY-MM-DD format.");
+      Alert.alert("Validation", "Effective from must be in DD-MM-YYYY format.");
+      return;
+    }
+
+    const publishEffectiveFromIso = parseDisplayDateToIso(publishEffectiveFrom);
+    if (!publishEffectiveFromIso) {
+      Alert.alert("Validation", "Effective from date is invalid.");
       return;
     }
 
@@ -1116,7 +1455,7 @@ export default function App(): React.JSX.Element {
         method: "POST",
         headers,
         body: JSON.stringify({
-          effective_from: publishEffectiveFrom,
+          effective_from: publishEffectiveFromIso,
           effective_to: null,
           source_reference: publishSourceReference.trim() || null,
           notes: publishNotes.trim() || null,
@@ -1344,13 +1683,15 @@ export default function App(): React.JSX.Element {
                 </Pressable>
               </Card>
 
-              <SnapshotCard
-                setAside={roundedSetAside}
-                estimatedTax={roundedTax}
-                claimable={`£${expensePreview.totalClaimable.toFixed(2)}`}
-                profit={`£${expensePreview.profit.toFixed(2)}`}
-                lastSavedAt={lastSavedAt}
-              />
+              {screen === "week" && (
+                <SnapshotCard
+                  setAside={roundedSetAside}
+                  estimatedTax={roundedTax}
+                  claimable={`£${expensePreview.totalClaimable.toFixed(2)}`}
+                  profit={`£${expensePreview.profit.toFixed(2)}`}
+                  lastSavedAt={lastSavedAt}
+                />
+              )}
 
               {status && (
                 <Animated.View style={{ transform: [{ scale: statusPulse }] }}>
@@ -1361,14 +1702,29 @@ export default function App(): React.JSX.Element {
               {screen === "week" && (
                 <FormSection title={entryMode === "daily" ? "Daily Entry" : "This Week"}>
                   <View style={styles.quickActionsRow}>
-                    <SmallAction label="Weekly Mode" onPress={() => setEntryMode("weekly")} active={entryMode === "weekly"} />
-                    <SmallAction label="Daily Mode" onPress={() => setEntryMode("daily")} active={entryMode === "daily"} />
+                    <SmallAction
+                      label="Weekly Mode"
+                      onPress={() => handleEntryModeChange("weekly")}
+                      active={entryMode === "weekly"}
+                      disabled={modeLock?.locked_mode === "daily"}
+                    />
+                    <SmallAction
+                      label="Daily Mode"
+                      onPress={() => handleEntryModeChange("daily")}
+                      active={entryMode === "daily"}
+                      disabled={modeLock?.locked_mode === "weekly"}
+                    />
                   </View>
                   <Text style={styles.noteText}>
                     {entryMode === "daily"
                       ? `Daily entries roll into the week starting ${resolvedWeekStart}.`
                       : "Weekly mode records the full week in one submission."}
                   </Text>
+                  {modeLock?.locked && modeLock.locked_mode && (
+                    <Text style={[styles.noteText, { color: colors.accent, fontWeight: "700" }]}>
+                      This week is locked to {modeLock.locked_mode} mode until next week.
+                    </Text>
+                  )}
                   <View style={styles.quickActionsRow}>
                     {entryMode === "daily" ? (
                       <SmallAction label="Use Today" onPress={setToday} />
@@ -1380,19 +1736,19 @@ export default function App(): React.JSX.Element {
                   {entryMode === "daily" ? (
                     <>
                       <Field
-                        label="Entry Date (YYYY-MM-DD)"
+                        label="Entry Date (DD-MM-YYYY)"
                         value={entryDate}
-                        onChange={setEntryDate}
-                        placeholder="2026-04-06"
+                        onChange={handleEntryDateChange}
+                        placeholder="18-04-2026"
                       />
                       <Text style={styles.noteText}>Weekly bucket: {resolvedWeekStart}</Text>
                     </>
                   ) : (
                     <Field
-                      label="Week Start Date (YYYY-MM-DD)"
+                      label="Week Start Date (DD-MM-YYYY)"
                       value={weekStartDate}
-                      onChange={setWeekStartDate}
-                      placeholder="2026-04-06"
+                      onChange={handleWeekStartDateChange}
+                      placeholder="14-04-2026"
                     />
                   )}
                   <Field
@@ -1445,6 +1801,7 @@ export default function App(): React.JSX.Element {
                     <PreviewPill label={entryMode === "daily" ? "Daily profit" : "Weekly profit"} value={expensePreview.profit} />
                   </View>
 
+                  <Text style={styles.noteText}>Use DD-MM-YYYY. Entries default to today or this Monday, and future dates are blocked.</Text>
                   <Text style={[styles.noteText, { color: colors.accent, fontWeight: "700" }]}>Warning: once submitted, this entry is locked and cannot be changed.</Text>
                   <Text style={styles.noteText}>Expenses reimbursed: £{expensePreview.totalReimbursed.toFixed(2)}</Text>
 
@@ -1521,8 +1878,15 @@ export default function App(): React.JSX.Element {
               )}
 
               {screen === "summary" && (
-                <FormSection title="Year Summary">
+                <FormSection title="Year Summary Snapshot">
                   <Field label="Tax Year (e.g. 2026-27)" value={taxYear} onChange={setTaxYear} />
+                  <Field
+                    label="Snapshot up to (DD-MM-YYYY)"
+                    value={summaryAsOfDate}
+                    onChange={handleSummaryAsOfDateChange}
+                    placeholder="18-04-2026"
+                  />
+                  <Text style={styles.noteText}>This shows your year-to-date position up to the selected date.</Text>
                   <Pressable
                     onPress={fetchSummary}
                     style={[styles.primaryButton, isLoadingSummary && styles.buttonDisabled]}
@@ -1531,24 +1895,32 @@ export default function App(): React.JSX.Element {
                     {isLoadingSummary ? (
                       <ActivityIndicator color={colors.accentText} />
                     ) : (
-                      <Text style={styles.primaryButtonText}>Load Year Summary</Text>
+                      <Text style={styles.primaryButtonText}>Load Year Snapshot</Text>
                     )}
                   </Pressable>
 
                   {summary && (
-                    <View style={styles.summaryBox}>
-                      <SummaryRow label="Total income" value={summary.total_income} />
-                      <SummaryRow label="Total expenses" value={summary.total_expenses} />
-                      <SummaryRow label="Net profit" value={summary.net_profit} />
-                      <SummaryRow
-                        label="Total tax + NI"
-                        value={summary.estimated_income_tax + summary.estimated_ni}
-                      />
-                    </View>
+                    <>
+                      <Text style={styles.noteText}>
+                        Snapshot up to {formatIsoToDisplayDate(summary.as_of_date || parseDisplayDateToIso(summaryAsOfDate) || getTodayIsoDate())} • {summary.weeks_logged || 0} logged entries.
+                      </Text>
+                      <View style={styles.summaryBox}>
+                        <SummaryRow label="Total income" value={summary.total_income} />
+                        <SummaryRow label="Total expenses" value={summary.total_expenses} />
+                        <SummaryRow label="Net profit" value={summary.net_profit} />
+                        <SummaryRow
+                          label="Total tax + NI"
+                          value={summary.estimated_income_tax + summary.estimated_ni}
+                        />
+                      </View>
+                      {!!summary.updated_at && (
+                        <Text style={styles.noteText}>Summary audit timestamp: {formatAuditTimestamp(summary.updated_at)}</Text>
+                      )}
+                    </>
                   )}
 
                   {!summary && !isLoadingSummary && (
-                    <Text style={styles.noteText}>No summary loaded yet. Enter tax year and tap load.</Text>
+                    <Text style={styles.noteText}>No year snapshot loaded yet. Choose a date and tap load.</Text>
                   )}
                 </FormSection>
               )}
@@ -1557,19 +1929,29 @@ export default function App(): React.JSX.Element {
                 <FormSection title="Export">
                   <Field label="Tax Year (e.g. 2026-27)" value={taxYear} onChange={setTaxYear} />
                   <Pressable
-                    onPress={fetchExport}
+                    onPress={() => {
+                      void fetchExport("download");
+                    }}
                     style={[styles.primaryButton, isLoadingExport && styles.buttonDisabled]}
                     disabled={isLoadingExport}
                   >
                     {isLoadingExport ? (
                       <ActivityIndicator color={colors.accentText} />
                     ) : (
-                      <Text style={styles.primaryButtonText}>Download Self Assessment Summary</Text>
+                      <Text style={styles.primaryButtonText}>Download CSV</Text>
                     )}
                   </Pressable>
+                  <View style={styles.quickActionsRow}>
+                    <SmallAction
+                      label="Email / Share CSV"
+                      onPress={() => {
+                        void fetchExport("share");
+                      }}
+                    />
+                  </View>
                   <TextInput multiline editable={false} style={styles.exportBox} value={exportData} />
                   {!exportData && !isLoadingExport && (
-                    <Text style={styles.noteText}>Your export JSON will appear here for quick review.</Text>
+                    <Text style={styles.noteText}>Choose download or email/share. Your CSV preview will appear here.</Text>
                   )}
                 </FormSection>
               )}
@@ -1627,9 +2009,9 @@ export default function App(): React.JSX.Element {
 
                   <Text style={styles.subSection}>Publish Next Rule Version</Text>
                   <Field
-                    label="Effective From (YYYY-MM-DD)"
+                    label="Effective From (DD-MM-YYYY)"
                     value={publishEffectiveFrom}
-                    onChange={setPublishEffectiveFrom}
+                    onChange={handlePublishEffectiveFromChange}
                   />
                   <Field
                     label="Source Reference URL"

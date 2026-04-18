@@ -18,6 +18,10 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_secret TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_pending_secret TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_enabled_at TIMESTAMP;
 ALTER TABLE weekly_entries ADD COLUMN IF NOT EXISTS company_providing_services_for TEXT;
+ALTER TABLE weekly_entries ADD COLUMN IF NOT EXISTS entry_mode TEXT NOT NULL DEFAULT 'weekly';
+ALTER TABLE weekly_entries ADD COLUMN IF NOT EXISTS entry_date DATE;
+UPDATE weekly_entries SET entry_mode = 'weekly' WHERE entry_mode IS NULL OR TRIM(entry_mode) = '';
+UPDATE weekly_entries SET entry_date = week_start_date WHERE entry_date IS NULL;
 UPDATE users SET role = 'user' WHERE role IS NULL;
 
 CREATE TABLE IF NOT EXISTS weekly_entries (

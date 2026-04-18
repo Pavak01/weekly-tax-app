@@ -60,15 +60,21 @@ export function SnapshotTile({ label, value }: { label: string; value: string })
 export function SmallAction({
   label,
   onPress,
-  active = false
+  active = false,
+  disabled = false
 }: {
   label: string;
   onPress: () => void;
   active?: boolean;
+  disabled?: boolean;
 }): React.JSX.Element {
   return (
-    <Pressable onPress={onPress} style={[styles.smallActionButton, active && styles.smallActionButtonActive]}>
-      <Text style={[styles.smallActionText, active && styles.smallActionTextActive]}>{label}</Text>
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      style={[styles.smallActionButton, active && styles.smallActionButtonActive, disabled && styles.smallActionButtonDisabled]}
+    >
+      <Text style={[styles.smallActionText, active && styles.smallActionTextActive, disabled && styles.smallActionTextDisabled]}>{label}</Text>
     </Pressable>
   );
 }
@@ -177,6 +183,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent,
     borderColor: colors.accent
   },
+  smallActionButtonDisabled: {
+    opacity: 0.45
+  },
   smallActionText: {
     fontSize: typography.small,
     color: colors.sectionHint,
@@ -184,6 +193,9 @@ const styles = StyleSheet.create({
   },
   smallActionTextActive: {
     color: colors.accentText
+  },
+  smallActionTextDisabled: {
+    color: colors.textSecondary
   },
   previewPill: {
     flex: 1,
