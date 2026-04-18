@@ -6,9 +6,10 @@
 - [x] Protect stored 2-step secrets with server-side encryption
 
 ## Next priorities
-- [ ] Restrict CORS to trusted app and admin origins only
-- [ ] Add rate limiting for sign-in, reset-password, and upload endpoints
-- [ ] Remove internal stack or database details from production API error responses
+- [x] Restrict CORS to trusted app and admin origins only
+- [x] Add rate limiting for sign-in, reset-password, and upload endpoints
+- [x] Remove internal stack or database details from production API error responses
+- [x] Add basic security headers for API responses
 - [ ] Move mobile auth tokens to secure device storage where available
 - [ ] Add backup recovery codes for locked-out users
 - [ ] Add sign-in and admin action audit logs

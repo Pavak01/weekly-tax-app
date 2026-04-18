@@ -16,8 +16,45 @@ import { getRuleMonitoringSnapshot, getRulesForTaxYear, getTaxYearFromDate } fro
 import { calculateTaxEstimate, generateComplianceWarnings } from "./taxEngine.js";
 
 const app = express();
-app.use(cors());
-app.use(express.json());
+const isProduction = process.env.NODE_ENV === "production";
+const configuredOrigins = String(process.env.ALLOWED_ORIGINS ?? "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+const allowedOrigins = new Set([
+  ...configuredOrigins,
+  "http://localhost:19006",
+  "http://localhost:8081",
+  "http://localhost:8082",
+  "http://localhost:4000",
+  "https://weekly-tax-app-production.up.railway.app"
+]);
+
+app.disable("x-powered-by");
+app.set("trust proxy", 1);
+app.use((req: Request, res: Response, next: NextFunction) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  if (isProduction) {
+    res.setHeader("Cache-Control", "no-store");
+  }
+  next();
+});
+app.use(
+  cors({
+    origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+      if (!origin || allowedOrigins.has(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      callback(new Error("Origin not allowed"));
+    }
+  })
+);
+app.use(express.json({ limit: "1mb" }));
 
 const port = Number(process.env.PORT || 4000);
 const jwtSecret: string = process.env.JWT_SECRET ?? "";
@@ -133,6 +170,97 @@ const adminRoleUpdateSchema = z.object({
   email: z.string().email(),
   role: z.enum(["admin", "user"])
 });
+
+type RateLimitEntry = {
+  count: number;
+  resetAt: number;
+};
+
+const rateLimitStore = new Map<string, RateLimitEntry>();
+
+function createRateLimitMiddleware({
+  key,
+  windowMs,
+  max,
+  message
+}: {
+  key: string;
+  windowMs: number;
+  max: number;
+  message: string;
+}) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const now = Date.now();
+    const ip = req.ip || req.socket.remoteAddress || "unknown";
+    const entryKey = `${key}:${ip}`;
+    const existing = rateLimitStore.get(entryKey);
+
+    if (!existing || existing.resetAt <= now) {
+      rateLimitStore.set(entryKey, { count: 1, resetAt: now + windowMs });
+      next();
+      return;
+    }
+
+    existing.count += 1;
+    rateLimitStore.set(entryKey, existing);
+
+    if (existing.count > max) {
+      const retryAfterSeconds = Math.ceil((existing.resetAt - now) / 1000);
+      res.setHeader("Retry-After", String(Math.max(1, retryAfterSeconds)));
+      res.status(429).json({ error: message });
+      return;
+    }
+
+    next();
+  };
+}
+
+const authRateLimit = createRateLimitMiddleware({
+  key: "auth",
+  windowMs: 15 * 60 * 1000,
+  max: 12,
+  message: "Too many authentication attempts. Please try again later."
+});
+
+const uploadRateLimit = createRateLimitMiddleware({
+  key: "upload",
+  windowMs: 10 * 60 * 1000,
+  max: 25,
+  message: "Too many upload attempts. Please try again later."
+});
+
+const adminRateLimit = createRateLimitMiddleware({
+  key: "admin",
+  windowMs: 10 * 60 * 1000,
+  max: 60,
+  message: "Too many admin actions. Please try again later."
+});
+
+function formatErrorDetails(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function sendError(res: Response, statusCode: number, publicMessage: string, error?: unknown): Response {
+  if (error) {
+    console.error(publicMessage, error);
+  }
+
+  if (isProduction || error === undefined) {
+    return res.status(statusCode).json({ error: publicMessage });
+  }
+
+  return res.status(statusCode).json({ error: publicMessage, details: formatErrorDetails(error) });
+}
+
+function safeSecretMatch(expected: string, provided: string): boolean {
+  const expectedBuffer = Buffer.from(expected);
+  const providedBuffer = Buffer.from(provided);
+  if (expectedBuffer.length !== providedBuffer.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(expectedBuffer, providedBuffer);
+}
 
 function signToken(userId: string): string {
   return jwt.sign({ sub: userId }, jwtSecret, { expiresIn: "7d" });
@@ -340,7 +468,7 @@ async function requireAdmin(req: Request, res: Response, next: NextFunction): Pr
 
     next();
   } catch (error) {
-    res.status(500).json({ error: "Failed to validate admin access", details: String(error) });
+    sendError(res, 500, "Failed to validate admin access", error);
   }
 }
 
@@ -348,7 +476,7 @@ app.get("/health", (_req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
-app.post("/auth/register", async (req: Request, res: Response) => {
+app.post("/auth/register", authRateLimit, async (req: Request, res: Response) => {
   const parsed = authSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: "Invalid payload", details: parsed.error.flatten() });
@@ -375,11 +503,11 @@ app.post("/auth/register", async (req: Request, res: Response) => {
     const token = signToken(user.id);
     return res.status(201).json({ token, user });
   } catch (error) {
-    return res.status(500).json({ error: "Failed to register", details: String(error) });
+    return sendError(res, 500, "Failed to register", error);
   }
 });
 
-app.post("/auth/login", async (req: Request, res: Response) => {
+app.post("/auth/login", authRateLimit, async (req: Request, res: Response) => {
   const parsed = authSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: "Invalid payload", details: parsed.error.flatten() });
@@ -431,11 +559,11 @@ app.post("/auth/login", async (req: Request, res: Response) => {
     const token = signToken(user.id);
     return res.json({ token, user: { id: user.id, email: user.email, role: user.role ?? "user" } });
   } catch (error) {
-    return res.status(500).json({ error: "Failed to login", details: String(error) });
+    return sendError(res, 500, "Failed to login", error);
   }
 });
 
-app.post("/auth/forgot-password", async (req: Request, res: Response) => {
+app.post("/auth/forgot-password", authRateLimit, async (req: Request, res: Response) => {
   const parsed = passwordResetRequestSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: "Invalid payload", details: parsed.error.flatten() });
@@ -470,11 +598,11 @@ app.post("/auth/forgot-password", async (req: Request, res: Response) => {
       expires_at: allowPasswordResetCodePreview ? expiresAt : undefined
     });
   } catch (error) {
-    return res.status(500).json({ error: "Failed to start password reset", details: String(error) });
+    return sendError(res, 500, "Failed to start password reset", error);
   }
 });
 
-app.post("/auth/reset-password", async (req: Request, res: Response) => {
+app.post("/auth/reset-password", authRateLimit, async (req: Request, res: Response) => {
   const parsed = passwordResetConfirmSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: "Invalid payload", details: parsed.error.flatten() });
@@ -511,11 +639,11 @@ app.post("/auth/reset-password", async (req: Request, res: Response) => {
       user: { id: user.id, email: user.email, role: user.role ?? "user" }
     });
   } catch (error) {
-    return res.status(500).json({ error: "Failed to reset password", details: String(error) });
+    return sendError(res, 500, "Failed to reset password", error);
   }
 });
 
-app.post("/auth/verify-2fa", async (req: Request, res: Response) => {
+app.post("/auth/verify-2fa", authRateLimit, async (req: Request, res: Response) => {
   const parsed = twoFactorVerifySchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: "Invalid payload", details: parsed.error.flatten() });
@@ -559,7 +687,7 @@ app.post("/auth/verify-2fa", async (req: Request, res: Response) => {
     const token = signToken(user.id);
     return res.json({ token, user: { id: user.id, email: user.email, role: user.role ?? "user" } });
   } catch (error) {
-    return res.status(500).json({ error: "Failed to verify two-step code", details: String(error) });
+    return sendError(res, 500, "Failed to verify two-step code", error);
   }
 });
 
@@ -584,11 +712,11 @@ app.get("/auth/2fa/status", requireAuth, async (req: Request, res: Response) => 
       pending_setup: Boolean(result.rows[0].two_factor_pending_secret)
     });
   } catch (error) {
-    return res.status(500).json({ error: "Failed to load two-step status", details: String(error) });
+    return sendError(res, 500, "Failed to load two-step status", error);
   }
 });
 
-app.post("/auth/2fa/setup", requireAuth, async (req: Request, res: Response) => {
+app.post("/auth/2fa/setup", requireAuth, authRateLimit, async (req: Request, res: Response) => {
   const authReq = req as AuthenticatedRequest;
 
   try {
@@ -611,11 +739,11 @@ app.post("/auth/2fa/setup", requireAuth, async (req: Request, res: Response) => 
       ...buildTwoFactorSetup(result.rows[0].email, secret)
     });
   } catch (error) {
-    return res.status(500).json({ error: "Failed to start two-step setup", details: String(error) });
+    return sendError(res, 500, "Failed to start two-step setup", error);
   }
 });
 
-app.post("/auth/2fa/enable", requireAuth, async (req: Request, res: Response) => {
+app.post("/auth/2fa/enable", requireAuth, authRateLimit, async (req: Request, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const parsed = twoFactorCodeSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -652,11 +780,11 @@ app.post("/auth/2fa/enable", requireAuth, async (req: Request, res: Response) =>
 
     return res.json({ message: "Two-step verification enabled." });
   } catch (error) {
-    return res.status(500).json({ error: "Failed to enable two-step verification", details: String(error) });
+    return sendError(res, 500, "Failed to enable two-step verification", error);
   }
 });
 
-app.post("/auth/2fa/disable", requireAuth, async (req: Request, res: Response) => {
+app.post("/auth/2fa/disable", requireAuth, authRateLimit, async (req: Request, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const parsed = twoFactorCodeSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -693,7 +821,7 @@ app.post("/auth/2fa/disable", requireAuth, async (req: Request, res: Response) =
 
     return res.json({ message: "Two-step verification disabled." });
   } catch (error) {
-    return res.status(500).json({ error: "Failed to disable two-step verification", details: String(error) });
+    return sendError(res, 500, "Failed to disable two-step verification", error);
   }
 });
 
@@ -712,7 +840,7 @@ app.get("/auth/me", requireAuth, async (req: Request, res: Response) => {
 
     return res.json({ user: result.rows[0] });
   } catch (error) {
-    return res.status(500).json({ error: "Failed to load profile", details: String(error) });
+    return sendError(res, 500, "Failed to load profile", error);
   }
 });
 
@@ -856,7 +984,7 @@ app.post("/weekly-entry", requireAuth, async (req: Request, res: Response) => {
     });
   } catch (error) {
     await client.query("ROLLBACK");
-    return res.status(500).json({ error: "Failed to create weekly entry", details: String(error) });
+    return sendError(res, 500, "Failed to create weekly entry", error);
   } finally {
     client.release();
   }
@@ -865,6 +993,7 @@ app.post("/weekly-entry", requireAuth, async (req: Request, res: Response) => {
 app.post(
   "/receipts/upload",
   requireAuth,
+  uploadRateLimit,
   upload.single("receipt"),
   async (req: Request, res: Response) => {
     const authReq = req as AuthenticatedRequest;
@@ -919,7 +1048,7 @@ app.post(
         }
       });
     } catch (error) {
-      return res.status(500).json({ error: "Failed to upload receipt", details: String(error) });
+      return sendError(res, 500, "Failed to upload receipt", error);
     }
   }
 );
@@ -959,7 +1088,7 @@ app.get("/receipts/:weeklyEntryId", requireAuth, async (req: Request, res: Respo
       }))
     });
   } catch (error) {
-    return res.status(500).json({ error: "Failed to list receipts", details: String(error) });
+    return sendError(res, 500, "Failed to list receipts", error);
   }
 });
 
@@ -1016,11 +1145,11 @@ app.get("/rules/:taxYear/monitoring", requireAuth, async (req: Request, res: Res
       ...snapshot
     });
   } catch (error) {
-    return res.status(404).json({ error: "No rule monitoring data found", details: String(error) });
+    return sendError(res, 404, "No rule monitoring data found", error);
   }
 });
 
-app.get("/admin/rules/:taxYear/audit-events", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+app.get("/admin/rules/:taxYear/audit-events", requireAuth, requireAdmin, adminRateLimit, async (req: Request, res: Response) => {
   const taxYear = req.params.taxYear;
   const limitRaw = Number(req.query.limit ?? 50);
   const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(200, Math.floor(limitRaw))) : 50;
@@ -1031,7 +1160,7 @@ app.get("/admin/rules/:taxYear/audit-events", requireAuth, requireAdmin, async (
 
   if (rulePublishSecret) {
     const providedSecret = String(req.headers["x-rule-publish-secret"] ?? "");
-    if (!providedSecret || providedSecret !== rulePublishSecret) {
+    if (!providedSecret || !safeSecretMatch(rulePublishSecret, providedSecret)) {
       return res.status(403).json({ error: "Missing or invalid rule publish secret" });
     }
   }
@@ -1065,11 +1194,11 @@ app.get("/admin/rules/:taxYear/audit-events", requireAuth, requireAdmin, async (
       events: events.rows
     });
   } catch (error) {
-    return res.status(500).json({ error: "Failed to load rule audit events", details: String(error) });
+    return sendError(res, 500, "Failed to load rule audit events", error);
   }
 });
 
-app.post("/admin/users/role", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+app.post("/admin/users/role", requireAuth, requireAdmin, adminRateLimit, async (req: Request, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const parsed = adminRoleUpdateSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -1106,11 +1235,11 @@ app.post("/admin/users/role", requireAuth, requireAdmin, async (req: Request, re
       user: updated.rows[0]
     });
   } catch (error) {
-    return res.status(500).json({ error: "Failed to update user role", details: String(error) });
+    return sendError(res, 500, "Failed to update user role", error);
   }
 });
 
-app.post("/rules/:taxYear/publish", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+app.post("/rules/:taxYear/publish", requireAuth, requireAdmin, adminRateLimit, async (req: Request, res: Response) => {
   const taxYear = req.params.taxYear;
   const authReq = req as AuthenticatedRequest;
 
@@ -1120,7 +1249,7 @@ app.post("/rules/:taxYear/publish", requireAuth, requireAdmin, async (req: Reque
 
   if (rulePublishSecret) {
     const providedSecret = String(req.headers["x-rule-publish-secret"] ?? "");
-    if (!providedSecret || providedSecret !== rulePublishSecret) {
+    if (!providedSecret || !safeSecretMatch(rulePublishSecret, providedSecret)) {
       return res.status(403).json({ error: "Missing or invalid rule publish secret" });
     }
   }
@@ -1252,7 +1381,7 @@ app.post("/rules/:taxYear/publish", requireAuth, requireAdmin, async (req: Reque
     });
   } catch (error) {
     await client.query("ROLLBACK");
-    return res.status(500).json({ error: "Failed to publish rule set", details: String(error) });
+    return sendError(res, 500, "Failed to publish rule set", error);
   } finally {
     client.release();
   }
@@ -1293,7 +1422,7 @@ app.get("/summary/:taxYear", requireAuth, async (req: Request, res: Response) =>
       updated_at: row.updated_at
     });
   } catch (error) {
-    return res.status(500).json({ error: "Failed to get summary", details: String(error) });
+    return sendError(res, 500, "Failed to get summary", error);
   }
 });
 
@@ -1381,7 +1510,7 @@ app.get("/tax-estimate/:weekId", requireAuth, async (req: Request, res: Response
       }
     });
   } catch (error) {
-    return res.status(500).json({ error: "Failed to calculate tax estimate", details: String(error) });
+    return sendError(res, 500, "Failed to calculate tax estimate", error);
   }
 });
 
@@ -1471,7 +1600,7 @@ app.get("/export/:taxYear", requireAuth, async (req: Request, res: Response) => 
 
     return res.json(payload);
   } catch (error) {
-    return res.status(500).json({ error: "Export failed", details: String(error) });
+    return sendError(res, 500, "Export failed", error);
   }
 });
 
