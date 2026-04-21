@@ -1742,6 +1742,132 @@ app.get("/export/:taxYear", requireAuth, async (req: Request, res: Response) => 
   }
 });
 
+app.delete("/weekly-entry/:weekStartDate", requireAuth, async (req: Request, res: Response) => {
+  const authReq = req as AuthenticatedRequest;
+  const weekStartDate = String(req.params.weekStartDate ?? "").trim();
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(weekStartDate)) {
+    return res.status(400).json({ error: "Week start date must be in YYYY-MM-DD format." });
+  }
+
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+
+    const weekData = await client.query<{ tax_year: string }>(
+      "SELECT tax_year FROM weekly_entries WHERE user_id = $1 AND week_start_date = $2 LIMIT 1",
+      [authReq.userId, weekStartDate]
+    );
+
+    if (weekData.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "No entries found for this week" });
+    }
+
+    const taxYear = weekData.rows[0].tax_year;
+
+    await client.query(
+      `DELETE FROM expenses
+       WHERE weekly_entry_id IN (
+         SELECT id FROM weekly_entries
+         WHERE user_id = $1 AND week_start_date = $2
+       )`,
+      [authReq.userId, weekStartDate]
+    );
+
+    await client.query(
+      "DELETE FROM weekly_entries WHERE user_id = $1 AND week_start_date = $2",
+      [authReq.userId, weekStartDate]
+    );
+
+    const totals = await client.query<{
+      total_income: number;
+      total_expenses: number;
+      net_profit: number;
+    }>(
+      `SELECT
+         COALESCE(SUM(we.income_total), 0)::numeric AS total_income,
+         COALESCE(SUM(e.net_amount), 0)::numeric AS total_expenses
+       FROM weekly_entries we
+       LEFT JOIN expenses e ON e.weekly_entry_id = we.id
+       WHERE we.user_id = $1 AND we.tax_year = $2`,
+      [authReq.userId, taxYear]
+    );
+
+    const row = totals.rows[0];
+    const totalIncome = Number(row.total_income);
+    const totalExpenses = Number(row.total_expenses);
+    const netProfit = totalIncome - totalExpenses;
+
+    const rules = await getRulesForTaxYear(taxYear);
+    const estimate = calculateTaxEstimate({
+      annualProfit: netProfit,
+      weeksLogged: 0,
+      rules
+    });
+
+    if (netProfit > 0 || totalIncome > 0) {
+      await client.query(
+        `INSERT INTO tax_summaries (
+           user_id, tax_year, total_income, total_expenses, net_profit,
+           estimated_income_tax, estimated_ni, updated_at
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+         ON CONFLICT (user_id, tax_year)
+         DO UPDATE SET
+           total_income = EXCLUDED.total_income,
+           total_expenses = EXCLUDED.total_expenses,
+           net_profit = EXCLUDED.net_profit,
+           estimated_income_tax = EXCLUDED.estimated_income_tax,
+           estimated_ni = EXCLUDED.estimated_ni,
+           updated_at = NOW()`,
+        [authReq.userId, taxYear, totalIncome, totalExpenses, netProfit, estimate.estimated_income_tax, estimate.estimated_ni]
+      );
+    } else {
+      await client.query(
+        "DELETE FROM tax_summaries WHERE user_id = $1 AND tax_year = $2",
+        [authReq.userId, taxYear]
+      );
+    }
+
+    await client.query("COMMIT");
+    return res.status(204).send();
+  } catch (error) {
+    await client.query("ROLLBACK");
+    return sendError(res, 500, "Failed to delete week entries", error);
+  } finally {
+    client.release();
+  }
+});
+
+app.delete("/all-entries", requireAuth, async (req: Request, res: Response) => {
+  const authReq = req as AuthenticatedRequest;
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+
+    await client.query(
+      `DELETE FROM expenses
+       WHERE weekly_entry_id IN (
+         SELECT id FROM weekly_entries WHERE user_id = $1
+       )`,
+      [authReq.userId]
+    );
+
+    await client.query("DELETE FROM weekly_entries WHERE user_id = $1", [authReq.userId]);
+
+    await client.query("DELETE FROM tax_summaries WHERE user_id = $1", [authReq.userId]);
+
+    await client.query("COMMIT");
+    return res.status(204).send();
+  } catch (error) {
+    await client.query("ROLLBACK");
+    return sendError(res, 500, "Failed to delete all entries", error);
+  } finally {
+    client.release();
+  }
+});
+
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   if (err instanceof multer.MulterError) {
     if (err.code === "LIMIT_FILE_SIZE") {

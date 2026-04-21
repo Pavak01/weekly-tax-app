@@ -1,5 +1,6 @@
 import React from "react";
 import {
+  ActivityIndicator,
   Pressable,
   StyleSheet,
   Text,
@@ -7,7 +8,7 @@ import {
   View
 } from "react-native";
 import type { KeyboardTypeOptions } from "react-native";
-import { colors, radius, typography } from "../theme/tokens";
+import { colors, radius, spacing, typography } from "../theme/tokens";
 
 export function Card({ children }: { children: React.ReactNode }): React.JSX.Element {
   return <View style={styles.card}>{children}</View>;
@@ -109,6 +110,34 @@ export function NavButton({
   return (
     <Pressable onPress={onPress} style={[styles.navButton, active && styles.navButtonActive]}>
       <Text style={[styles.navButtonText, active && styles.navButtonTextActive]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+export function DangerAction({
+  label,
+  sublabel,
+  onPress,
+  disabled = false,
+  isLoading = false
+}: {
+  label: string;
+  sublabel?: string;
+  onPress: () => void;
+  disabled?: boolean;
+  isLoading?: boolean;
+}): React.JSX.Element {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled || isLoading}
+      style={[styles.dangerAction, (disabled || isLoading) && styles.dangerActionDisabled]}
+    >
+      <View style={styles.dangerActionContent}>
+        <Text style={styles.dangerActionLabel}>{label}</Text>
+        {sublabel && <Text style={styles.dangerActionSublabel}>{sublabel}</Text>}
+      </View>
+      {isLoading && <ActivityIndicator color="#d9534f" size="small" />}
     </Pressable>
   );
 }
@@ -245,5 +274,33 @@ const styles = StyleSheet.create({
   },
   navButtonTextActive: {
     color: colors.navTextActive
+  },
+  dangerAction: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: radius.md,
+    backgroundColor: "#ffe6e6",
+    borderWidth: 1,
+    borderColor: "#d9534f"
+  },
+  dangerActionDisabled: {
+    opacity: 0.5
+  },
+  dangerActionContent: {
+    flex: 1,
+    gap: spacing.xs
+  },
+  dangerActionLabel: {
+    fontSize: typography.body,
+    fontWeight: "600",
+    color: "#d9534f"
+  },
+  dangerActionSublabel: {
+    fontSize: typography.small,
+    color: colors.textSecondary,
+    fontWeight: "400"
   }
 });

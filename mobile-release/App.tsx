@@ -22,6 +22,7 @@ import { AppHeader } from "./src/components/AppHeader";
 import { Card, Field, PreviewPill, SmallAction, StatusBanner, SummaryRow } from "./src/components/Controls";
 import { SnapshotCard } from "./src/components/SnapshotCard";
 import { FormSection } from "./src/components/FormSection";
+import { SettingsScreen } from "./src/components/SettingsScreen";
 import { colors, motion, radius, spacing, typography } from "./src/theme/tokens";
 
 const runtimeApiBaseUrl = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env
@@ -33,7 +34,7 @@ const API_BASE_URL =
 const QUICK_STATE_KEY = "weekly-tax-app:quick-state:v1";
 const AUTH_STATE_KEY = "weekly-tax-app:auth-state:v1";
 
-type Screen = "week" | "summary" | "export" | "admin" | "guide";
+type Screen = "week" | "summary" | "export" | "admin" | "guide" | "settings";
 type EntryMode = "weekly" | "daily";
 
 type AuthUser = {
@@ -1260,6 +1261,43 @@ export default function App(): React.JSX.Element {
     }
   }
 
+  async function clearWeekData(weekStartDateDisplay: string): Promise<void> {
+    const weekStartDateIso = parseDisplayDateToIso(weekStartDateDisplay);
+    if (!weekStartDateIso) {
+      throw new Error("Invalid date format");
+    }
+
+    const response = await authedFetch(`/weekly-entry/${weekStartDateIso}`, {
+      method: "DELETE"
+    });
+
+    if (!response.ok) {
+      const payload = await response.json();
+      throw new Error(payload.error || "Failed to clear week data");
+    }
+
+    setModeLock(null);
+    setStatus({ kind: "info", text: "This week's data has been cleared." });
+  }
+
+  async function clearAllData(): Promise<void> {
+    const response = await authedFetch("/all-entries", {
+      method: "DELETE"
+    });
+
+    if (!response.ok) {
+      const payload = await response.json();
+      throw new Error(payload.error || "Failed to clear all data");
+    }
+
+    setModeLock(null);
+    setSetAside(null);
+    setEstimatedTax(null);
+    setCurrentWeekId(null);
+    setLastSavedAt(null);
+    setStatus({ kind: "info", text: "All data has been cleared." });
+  }
+
   async function fetchSummary(): Promise<void> {
     if (!authUser) {
       setStatus({ kind: "error", text: "Please sign in first." });
@@ -2290,6 +2328,15 @@ export default function App(): React.JSX.Element {
                     </>
                   )}
                 </FormSection>
+              )}
+
+              {screen === "settings" && (
+                <SettingsScreen
+                  email={authUser?.email || ""}
+                  currentWeekStartDate={parseDisplayDateToIso(weekStartDate) || getTodayIsoDate()}
+                  onClearWeek={clearWeekData}
+                  onClearAll={clearAllData}
+                />
               )}
             </Animated.ScrollView>
           </>
