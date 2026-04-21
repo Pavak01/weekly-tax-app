@@ -1536,6 +1536,42 @@ app.get("/summary/:taxYear", requireAuth, async (req: Request, res: Response) =>
 
     const totalIncome = rows.rows.reduce((sum, row) => sum + Number(row.income), 0);
     const totalExpenses = rows.rows.reduce((sum, row) => sum + Number(row.expenses), 0);
+    const monthlyBreakdownMap = new Map<
+      string,
+      {
+        month: string;
+        month_label: string;
+        entries_logged: number;
+        total_income: number;
+        total_expenses: number;
+      }
+    >();
+
+    for (const row of rows.rows) {
+      const month = row.week_start_date.slice(0, 7);
+      const existingMonth = monthlyBreakdownMap.get(month);
+
+      if (existingMonth) {
+        existingMonth.entries_logged += 1;
+        existingMonth.total_income += Number(row.income);
+        existingMonth.total_expenses += Number(row.expenses);
+        continue;
+      }
+
+      const monthDate = new Date(`${month}-01T00:00:00Z`);
+      monthlyBreakdownMap.set(month, {
+        month,
+        month_label: monthDate.toLocaleString("en-GB", {
+          month: "long",
+          year: "numeric",
+          timeZone: "UTC"
+        }),
+        entries_logged: 1,
+        total_income: Number(row.income),
+        total_expenses: Number(row.expenses)
+      });
+    }
+
     const netProfit = totalIncome - totalExpenses;
     const rules = await getRulesForTaxYear(taxYear);
     const estimate = calculateTaxEstimate({
@@ -1554,6 +1590,12 @@ app.get("/summary/:taxYear", requireAuth, async (req: Request, res: Response) =>
       net_profit: Number(netProfit.toFixed(2)),
       estimated_income_tax: Number(estimate.estimated_income_tax.toFixed(2)),
       estimated_ni: Number(estimate.estimated_ni.toFixed(2)),
+      monthly_breakdown: Array.from(monthlyBreakdownMap.values()).map((month) => ({
+        ...month,
+        total_income: Number(month.total_income.toFixed(2)),
+        total_expenses: Number(month.total_expenses.toFixed(2)),
+        net_profit: Number((month.total_income - month.total_expenses).toFixed(2))
+      })),
       updated_at: updatedAt
     });
   } catch (error) {

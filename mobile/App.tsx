@@ -143,6 +143,14 @@ export default function App(): React.JSX.Element {
     net_profit: number;
     estimated_income_tax: number;
     estimated_ni: number;
+    monthly_breakdown: Array<{
+      month: string;
+      month_label: string;
+      entries_logged: number;
+      total_income: number;
+      total_expenses: number;
+      net_profit: number;
+    }>;
     updated_at?: string | null;
   }>(null);
 
@@ -232,6 +240,16 @@ export default function App(): React.JSX.Element {
     () => (entryMode === "daily" ? getWeekStartFromDate(entryDate) : weekStartDate),
     [entryDate, entryMode, weekStartDate]
   );
+  const canGoToNextWeek = useMemo(() => {
+    if (entryMode === "daily") {
+      const entryDateIso = parseDisplayDateToIso(entryDate);
+      return !!entryDateIso && entryDateIso < getTodayIsoDate();
+    }
+
+    const weekStartDateIso = parseDisplayDateToIso(weekStartDate);
+    const currentWeekStartDateIso = parseDisplayDateToIso(getCurrentMondayDisplayDate());
+    return !!weekStartDateIso && !!currentWeekStartDateIso && weekStartDateIso < currentWeekStartDateIso;
+  }, [entryDate, entryMode, weekStartDate]);
 
   const isAdmin = authUser?.role === "admin";
 
@@ -539,6 +557,17 @@ export default function App(): React.JSX.Element {
     return formatIsoToDisplayDate(date.toISOString().slice(0, 10));
   }
 
+  function addDaysToDisplayDate(value: string, days: number): string {
+    const isoDate = parseDisplayDateToIso(value);
+    if (!isoDate) {
+      return value;
+    }
+
+    const date = new Date(`${isoDate}T00:00:00Z`);
+    date.setUTCDate(date.getUTCDate() + days);
+    return formatIsoToDisplayDate(date.toISOString().slice(0, 10));
+  }
+
   function handleEntryModeChange(nextMode: EntryMode): void {
     if (modeLock?.locked && modeLock.locked_mode && modeLock.locked_mode !== nextMode) {
       Alert.alert(
@@ -561,6 +590,35 @@ export default function App(): React.JSX.Element {
   function setToday(): void {
     handleEntryModeChange("daily");
     setEntryDate(getTodayDisplayDate());
+  }
+
+  function goToPreviousWeek(): void {
+    if (entryMode === "daily") {
+      setEntryDate((current) => addDaysToDisplayDate(current, -7));
+      return;
+    }
+
+    setWeekStartDate((current) => addDaysToDisplayDate(current, -7));
+  }
+
+  function goToNextWeek(): void {
+    if (entryMode === "daily") {
+      const nextEntryDate = addDaysToDisplayDate(entryDate, 7);
+      const nextEntryDateIso = parseDisplayDateToIso(nextEntryDate);
+
+      if (nextEntryDateIso && nextEntryDateIso <= getTodayIsoDate()) {
+        setEntryDate(nextEntryDate);
+      }
+      return;
+    }
+
+    const nextWeekStartDate = addDaysToDisplayDate(weekStartDate, 7);
+    const nextWeekStartDateIso = parseDisplayDateToIso(nextWeekStartDate);
+    const currentWeekStartDateIso = parseDisplayDateToIso(getCurrentMondayDisplayDate());
+
+    if (nextWeekStartDateIso && currentWeekStartDateIso && nextWeekStartDateIso <= currentWeekStartDateIso) {
+      setWeekStartDate(nextWeekStartDate);
+    }
   }
 
   function handleEntryDateChange(value: string): void {
@@ -1339,6 +1397,16 @@ export default function App(): React.JSX.Element {
         net_profit: Number(payload.net_profit ?? 0),
         estimated_income_tax: Number(payload.estimated_income_tax ?? 0),
         estimated_ni: Number(payload.estimated_ni ?? 0),
+        monthly_breakdown: Array.isArray(payload.monthly_breakdown)
+          ? payload.monthly_breakdown.map((month: Record<string, unknown>) => ({
+              month: String(month.month ?? ""),
+              month_label: String(month.month_label ?? month.month ?? ""),
+              entries_logged: Number(month.entries_logged ?? 0),
+              total_income: Number(month.total_income ?? 0),
+              total_expenses: Number(month.total_expenses ?? 0),
+              net_profit: Number(month.net_profit ?? 0)
+            }))
+          : [],
         updated_at: payload.updated_at ?? null
       });
       setStatus({ kind: "info", text: `Year snapshot loaded up to ${summaryAsOfDate}.` });
@@ -1828,6 +1896,10 @@ export default function App(): React.JSX.Element {
                     </Text>
                   )}
                   <View style={styles.quickActionsRow}>
+                    <SmallAction label="Previous Week" onPress={goToPreviousWeek} />
+                    <SmallAction label="Next Week" onPress={goToNextWeek} disabled={!canGoToNextWeek} />
+                  </View>
+                  <View style={styles.quickActionsRow}>
                     {entryMode === "daily" ? (
                       <SmallAction label="Use Today" onPress={setToday} />
                     ) : (
@@ -2017,6 +2089,21 @@ export default function App(): React.JSX.Element {
                       </View>
                       {!!summary.updated_at && (
                         <Text style={styles.noteText}>Summary audit timestamp: {formatAuditTimestamp(summary.updated_at)}</Text>
+                      )}
+                      {!!summary.monthly_breakdown.length && (
+                        <>
+                          <Text style={styles.subSection}>Monthly Review</Text>
+                          {summary.monthly_breakdown.map((month) => (
+                            <View key={month.month} style={styles.summaryBox}>
+                              <Text style={styles.noteText}>
+                                {month.month_label} • {month.entries_logged} logged entries.
+                              </Text>
+                              <SummaryRow label="Income" value={month.total_income} />
+                              <SummaryRow label="Expenses" value={month.total_expenses} />
+                              <SummaryRow label="Net profit" value={month.net_profit} />
+                            </View>
+                          ))}
+                        </>
                       )}
                     </>
                   )}
