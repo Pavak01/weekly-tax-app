@@ -1,10 +1,20 @@
 {
   "expo": {
-    "name": "Weekly Tax App",
+    "name": "Qbit",
     "slug": "weekly-tax-app",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
+    "icon": "./assets/icon.png",
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#f5ede1"
+      }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
     "plugins": [
       "expo-asset"
     ]

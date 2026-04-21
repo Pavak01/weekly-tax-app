@@ -1,11 +1,12 @@
 {
   "expo": {
-    "name": "Weekly Tax App Release",
+    "name": "Qbit",
     "slug": "weekly-tax-app-release",
     "description": "Compliance-focused weekly tax tracking for self-employed vehicle movement drivers.",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
+    "icon": "./assets/icon.png",
     "backgroundColor": "#f5ede1",
     "scheme": "weeklytaxapp",
     "runtimeVersion": {
@@ -27,8 +28,12 @@
       "versionCode": 1,
       "permissions": [],
       "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#f5ede1"
       }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
     },
     "extra": {
       "apiBaseUrl": "http://localhost:4000",

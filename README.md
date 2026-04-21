@@ -1,4 +1,4 @@
-# Weekly Tax App (MVP)
+# Qbit (MVP)
 
 Simple interface on top of a legally structured financial record system for self-employed vehicle movement drivers.
 

@@ -25,7 +25,7 @@ export function SnapshotCard({
         <SnapshotTile label="Claimable" value={claimable} />
         <SnapshotTile label="Profit" value={profit} />
       </View>
-      {!!lastSavedAt && <Text style={styles.helperText}>Last saved today at {lastSavedAt}</Text>}
+      {!!lastSavedAt && <Text style={styles.helperText}>Last audit timestamp: {lastSavedAt}</Text>}
     </Card>
   );
 }
