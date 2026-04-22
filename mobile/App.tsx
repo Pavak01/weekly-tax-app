@@ -2528,7 +2528,7 @@ export default function App(): React.JSX.Element {
               {screen === "settings" && (
                 <SettingsScreen
                   email={authUser?.email || ""}
-                  currentWeekStartDate={parseDisplayDateToIso(resolvedWeekStart) || getTodayIsoDate()}
+                  currentWeekStartDate={resolvedWeekStart}
                   entryMode={entryMode}
                   onClearWeek={clearWeekData}
                   onClearAll={clearAllData}
