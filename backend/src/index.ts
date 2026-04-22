@@ -1886,6 +1886,15 @@ app.delete("/weekly-entry/:weekStartDate", requireAuth, async (req: Request, res
     );
 
     await client.query(
+      `DELETE FROM receipts
+       WHERE weekly_entry_id IN (
+         SELECT id FROM weekly_entries
+         WHERE user_id = $1 AND week_start_date = $2
+       )`,
+      [authReq.userId, weekStartDate]
+    );
+
+    await client.query(
       "DELETE FROM weekly_entries WHERE user_id = $1 AND week_start_date = $2",
       [authReq.userId, weekStartDate]
     );
@@ -1958,6 +1967,14 @@ app.delete("/all-entries", requireAuth, async (req: Request, res: Response) => {
 
     await client.query(
       `DELETE FROM expenses
+       WHERE weekly_entry_id IN (
+         SELECT id FROM weekly_entries WHERE user_id = $1
+       )`,
+      [authReq.userId]
+    );
+
+    await client.query(
+      `DELETE FROM receipts
        WHERE weekly_entry_id IN (
          SELECT id FROM weekly_entries WHERE user_id = $1
        )`,
