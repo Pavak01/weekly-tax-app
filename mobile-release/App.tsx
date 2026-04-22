@@ -34,7 +34,7 @@ const API_BASE_URL =
 const QUICK_STATE_KEY = "weekly-tax-app:quick-state:v1";
 const AUTH_STATE_KEY = "weekly-tax-app:auth-state:v1";
 
-type Screen = "week" | "summary" | "export" | "admin" | "guide" | "settings";
+type Screen = "week" | "summary" | "audit" | "export" | "admin" | "guide" | "settings";
 type EntryMode = "weekly" | "monthly";
 
 type AuthUser = {
@@ -96,6 +96,30 @@ type RuleAuditEvent = {
   event_payload: unknown;
   performed_by: string | null;
   performed_at: string;
+};
+
+type AuditReceipt = {
+  id: string;
+  weekly_entry_id: string;
+  original_filename: string;
+  storage_path: string;
+  mime_type: string | null;
+  file_size_bytes: number;
+  created_at: string;
+  download_url: string;
+};
+
+type AuditEntry = {
+  id: string;
+  week_start_date: string;
+  entry_date: string | null;
+  entry_mode: string;
+  income_total: number;
+  total_expenses: number;
+  net_profit: number;
+  company_providing_services_for: string | null;
+  created_at: string;
+  receipts: AuditReceipt[];
 };
 
 export default function App(): React.JSX.Element {
@@ -174,6 +198,7 @@ export default function App(): React.JSX.Element {
 
   const [isSavingWeek, setIsSavingWeek] = useState(false);
   const [isLoadingSummary, setIsLoadingSummary] = useState(false);
+  const [isLoadingAudit, setIsLoadingAudit] = useState(false);
   const [isLoadingExport, setIsLoadingExport] = useState(false);
   const [isUploadingReceipt, setIsUploadingReceipt] = useState(false);
   const [isLoadingReceipts, setIsLoadingReceipts] = useState(false);
@@ -186,6 +211,7 @@ export default function App(): React.JSX.Element {
   const [rulePublishSecretInput, setRulePublishSecretInput] = useState("");
   const [monitoringData, setMonitoringData] = useState<RuleMonitoringResponse | null>(null);
   const [auditEvents, setAuditEvents] = useState<RuleAuditEvent[]>([]);
+  const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
   const [publishEffectiveFrom, setPublishEffectiveFrom] = useState(getCurrentMondayDisplayDate());
   const [publishSourceReference, setPublishSourceReference] = useState(
     "https://www.gov.uk/self-employed-national-insurance-rates"
@@ -1540,6 +1566,68 @@ export default function App(): React.JSX.Element {
     }
   }
 
+  async function fetchAuditTrail(): Promise<void> {
+    if (!authUser) {
+      setStatus({ kind: "error", text: "Please sign in first." });
+      return;
+    }
+
+    if (!isTaxYear(taxYear)) {
+      Alert.alert("Validation", "Tax year must be in YYYY-YY format, for example 2026-27.");
+      setStatus({ kind: "error", text: "Tax year format is invalid." });
+      return;
+    }
+
+    setIsLoadingAudit(true);
+    setStatus({ kind: "info", text: "Loading audit trail..." });
+
+    try {
+      const response = await authedFetch(`/audit/${taxYear}`);
+      const payload = await response.json();
+      if (!response.ok) {
+        Alert.alert("Error", payload.error || "Failed to load audit trail");
+        setStatus({ kind: "error", text: payload.error || "Failed to load audit trail." });
+        return;
+      }
+
+      const entries = Array.isArray(payload.entries)
+        ? payload.entries.map((entry: Record<string, unknown>) => ({
+            id: String(entry.id ?? ""),
+            week_start_date: String(entry.week_start_date ?? ""),
+            entry_date: entry.entry_date ? String(entry.entry_date) : null,
+            entry_mode: String(entry.entry_mode ?? "weekly"),
+            income_total: Number(entry.income_total ?? 0),
+            total_expenses: Number(entry.total_expenses ?? 0),
+            net_profit: Number(entry.net_profit ?? 0),
+            company_providing_services_for: entry.company_providing_services_for
+              ? String(entry.company_providing_services_for)
+              : null,
+            created_at: String(entry.created_at ?? ""),
+            receipts: Array.isArray(entry.receipts)
+              ? entry.receipts.map((receipt: Record<string, unknown>) => ({
+                  id: String(receipt.id ?? ""),
+                  weekly_entry_id: String(receipt.weekly_entry_id ?? entry.id ?? ""),
+                  original_filename: String(receipt.original_filename ?? "receipt"),
+                  storage_path: String(receipt.storage_path ?? ""),
+                  mime_type: receipt.mime_type ? String(receipt.mime_type) : null,
+                  file_size_bytes: Number(receipt.file_size_bytes ?? 0),
+                  created_at: String(receipt.created_at ?? ""),
+                  download_url: String(receipt.download_url ?? "")
+                }))
+              : []
+          }))
+        : [];
+
+      setAuditEntries(entries);
+      setStatus({ kind: "info", text: `Audit trail loaded (${entries.length} entries).` });
+    } catch (error) {
+      Alert.alert("Network error", String(error));
+      setStatus({ kind: "error", text: "Network error while loading audit trail." });
+    } finally {
+      setIsLoadingAudit(false);
+    }
+  }
+
   async function saveCsvExport(
     csvText: string,
     year: string,
@@ -1993,19 +2081,43 @@ export default function App(): React.JSX.Element {
 
               {screen === "week" && (
                 <FormSection title={entryMode === "monthly" ? "Monthly Entry" : "This Week"}>
-                  <View style={styles.quickActionsRow}>
-                    <SmallAction
-                      label="Weekly Mode"
+                  <View style={styles.periodSegment}>
+                    <Pressable
                       onPress={() => handleEntryModeChange("weekly")}
-                      active={entryMode === "weekly"}
                       disabled={modeLock?.locked_mode === "monthly"}
-                    />
-                    <SmallAction
-                      label="Monthly Mode"
+                      style={[
+                        styles.periodSegmentOption,
+                        entryMode === "weekly" && styles.periodSegmentOptionActive,
+                        modeLock?.locked_mode === "monthly" && styles.periodSegmentOptionDisabled
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.periodSegmentText,
+                          entryMode === "weekly" && styles.periodSegmentTextActive
+                        ]}
+                      >
+                        Weekly
+                      </Text>
+                    </Pressable>
+                    <Pressable
                       onPress={() => handleEntryModeChange("monthly")}
-                      active={entryMode === "monthly"}
                       disabled={modeLock?.locked_mode === "weekly"}
-                    />
+                      style={[
+                        styles.periodSegmentOption,
+                        entryMode === "monthly" && styles.periodSegmentOptionActive,
+                        modeLock?.locked_mode === "weekly" && styles.periodSegmentOptionDisabled
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.periodSegmentText,
+                          entryMode === "monthly" && styles.periodSegmentTextActive
+                        ]}
+                      >
+                        Monthly
+                      </Text>
+                    </Pressable>
                   </View>
                   <Text style={styles.noteText}>
                     {entryMode === "monthly"
@@ -2113,6 +2225,17 @@ export default function App(): React.JSX.Element {
                       <Text style={styles.primaryButtonText}>{entryMode === "monthly" ? "Save Monthly Entry" : "Save Weekly Entry"}</Text>
                     )}
                   </Pressable>
+
+                  <View style={styles.saveStatusCard}>
+                    <Text style={styles.saveStatusTitle}>Submission status</Text>
+                    <Text style={styles.saveStatusText}>
+                      {isSavingWeek
+                        ? "Saving in progress..."
+                        : lastSavedAt
+                          ? `Last saved: ${lastSavedAt}`
+                          : "Not saved yet for this period."}
+                    </Text>
+                  </View>
 
                   {setAside !== null && <Text style={styles.resultText}>Set aside £{setAside.toFixed(2)}</Text>}
                   {estimatedTax !== null && <Text style={styles.resultText}>Estimated tax £{estimatedTax.toFixed(2)}</Text>}
@@ -2249,6 +2372,64 @@ export default function App(): React.JSX.Element {
                   {!summary && !isLoadingSummary && (
                     <Text style={styles.noteText}>No year snapshot loaded yet. Choose a date and tap load.</Text>
                   )}
+                </FormSection>
+              )}
+
+              {screen === "audit" && (
+                <FormSection title="Audit Trail">
+                  <Field label="Tax Year (e.g. 2026-27)" value={taxYear} onChange={setTaxYear} />
+                  <Text style={styles.noteText}>Review every saved entry with attached receipts and ready-to-open files.</Text>
+                  <Pressable
+                    onPress={fetchAuditTrail}
+                    style={[styles.primaryButton, isLoadingAudit && styles.buttonDisabled]}
+                    disabled={isLoadingAudit}
+                  >
+                    {isLoadingAudit ? (
+                      <ActivityIndicator color={colors.accentText} />
+                    ) : (
+                      <Text style={styles.primaryButtonText}>Load Audit Trail</Text>
+                    )}
+                  </Pressable>
+
+                  {!isLoadingAudit && auditEntries.length === 0 && (
+                    <Text style={styles.noteText}>No audit entries loaded yet.</Text>
+                  )}
+
+                  {auditEntries.map((entry) => (
+                    <View key={entry.id} style={styles.summaryBox}>
+                      <Text style={styles.label}>
+                        {entry.entry_mode === "monthly" ? "Monthly entry" : "Weekly entry"} • {formatIsoToDisplayDate(entry.week_start_date)}
+                      </Text>
+                      {!!entry.entry_date && (
+                        <Text style={styles.noteText}>Reference date: {formatIsoToDisplayDate(entry.entry_date)}</Text>
+                      )}
+                      {!!entry.company_providing_services_for && (
+                        <Text style={styles.noteText}>Company: {entry.company_providing_services_for}</Text>
+                      )}
+                      <SummaryRow label="Income" value={entry.income_total} />
+                      <SummaryRow label="Expenses" value={entry.total_expenses} />
+                      <SummaryRow label="Net profit" value={entry.net_profit} />
+                      <Text style={styles.noteText}>Saved at: {formatAuditTimestamp(entry.created_at)}</Text>
+
+                      <Text style={styles.subSection}>Receipts ({entry.receipts.length})</Text>
+                      {entry.receipts.length === 0 && <Text style={styles.noteText}>No receipts attached.</Text>}
+                      {entry.receipts.length > 0 && (
+                        <View style={styles.receiptList}>
+                          {entry.receipts.map((receipt) => (
+                            <Pressable
+                              key={receipt.id}
+                              onPress={() => void openReceipt(receipt)}
+                              style={({ pressed }) => [styles.receiptItem, pressed && styles.receiptItemPressed]}
+                            >
+                              <Text style={styles.receiptName}>{receipt.original_filename}</Text>
+                              <Text style={styles.receiptMeta}>{Math.round(receipt.file_size_bytes / 1024)} KB</Text>
+                              <Text style={styles.receiptHint}>Tap to open or share</Text>
+                            </Pressable>
+                          ))}
+                        </View>
+                      )}
+                    </View>
+                  ))}
                 </FormSection>
               )}
 
@@ -2711,6 +2892,34 @@ const styles = StyleSheet.create({
     gap: 8,
     marginBottom: 10
   },
+  periodSegment: {
+    flexDirection: "row",
+    backgroundColor: colors.accentSoft,
+    borderRadius: radius.md,
+    padding: 4,
+    gap: 4,
+    marginBottom: 10
+  },
+  periodSegmentOption: {
+    flex: 1,
+    borderRadius: radius.sm,
+    paddingVertical: 10,
+    alignItems: "center"
+  },
+  periodSegmentOptionActive: {
+    backgroundColor: colors.accent
+  },
+  periodSegmentOptionDisabled: {
+    opacity: 0.45
+  },
+  periodSegmentText: {
+    color: colors.textSecondary,
+    fontSize: typography.small,
+    fontWeight: "700"
+  },
+  periodSegmentTextActive: {
+    color: colors.accentText
+  },
   primaryButton: {
     marginTop: 8,
     backgroundColor: colors.accent,
@@ -2739,6 +2948,25 @@ const styles = StyleSheet.create({
     marginTop: 8,
     color: colors.snapshotValue,
     fontSize: 16,
+    fontWeight: "600"
+  },
+  saveStatusCard: {
+    marginTop: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    backgroundColor: colors.accentSoftAlt,
+    padding: spacing.md
+  },
+  saveStatusTitle: {
+    fontSize: typography.small,
+    color: colors.textMain,
+    fontWeight: "700"
+  },
+  saveStatusText: {
+    marginTop: 4,
+    fontSize: typography.small,
+    color: colors.textSecondary,
     fontWeight: "600"
   },
   noteText: {
