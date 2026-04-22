@@ -2736,11 +2736,13 @@ export default function App(): React.JSX.Element {
                 <FormSection title="User Guide & FAQ">
                   <Text style={styles.subSection}>Quick User Guide</Text>
                   <Text style={styles.guideItem}>1. Sign in or create your account.</Text>
-                  <Text style={styles.guideItem}>2. Choose daily, weekly, or monthly mode, then enter income and expenses.</Text>
-                  <Text style={styles.guideItem}>3. Add any reimbursed expenses so the claimable total stays accurate.</Text>
-                  <Text style={styles.guideItem}>4. Confirm the submission warning before saving your locked record.</Text>
-                  <Text style={styles.guideItem}>5. Upload receipts after saving the weekly entry.</Text>
-                  <Text style={styles.guideItem}>6. Use Year Summary and Export for annual review and records.</Text>
+                  <Text style={styles.guideItem}>2. Open the 4-line menu button in the header to access all pages.</Text>
+                  <Text style={styles.guideItem}>3. Choose daily, weekly, or monthly mode, then enter income and expenses.</Text>
+                  <Text style={styles.guideItem}>4. Add reimbursed amounts so claimable expenses stay accurate.</Text>
+                  <Text style={styles.guideItem}>5. Confirm submission to save a locked record for audit traceability.</Text>
+                  <Text style={styles.guideItem}>6. Upload receipts after saving the entry.</Text>
+                  <Text style={styles.guideItem}>7. Use Audit Trail to review entries and open attached receipts.</Text>
+                  <Text style={styles.guideItem}>8. Use Year Summary and Export for annual review and records.</Text>
 
                   <Text style={styles.subSection}>FAQ</Text>
                   <Text style={styles.faqQuestion}>Why is my entry locked after save?</Text>
@@ -2751,6 +2753,22 @@ export default function App(): React.JSX.Element {
                   <Text style={styles.faqQuestion}>How do reimbursed expenses work?</Text>
                   <Text style={styles.noteText}>
                     Reimbursed amounts are removed from the claimable expense total so your estimate stays more accurate.
+                  </Text>
+
+                  <Text style={styles.faqQuestion}>Where is Settings now?</Text>
+                  <Text style={styles.noteText}>
+                    Open the 4-line menu in the header. Settings is placed at the bottom, separated from the main tabs.
+                  </Text>
+
+                  <Text style={styles.faqQuestion}>What is the Audit Trail page for?</Text>
+                  <Text style={styles.noteText}>
+                    It shows entry-by-entry records for the selected tax year, including receipt files with secure open/share links.
+                  </Text>
+
+                  <Text style={styles.faqQuestion}>When should I use daily vs weekly vs monthly?</Text>
+                  <Text style={styles.noteText}>
+                    Use daily for day-level logging, weekly for one weekly submission, and monthly for month-level logging. All modes
+                    roll into yearly summaries.
                   </Text>
 
                   <Text style={styles.faqQuestion}>Are tax values final HMRC liabilities?</Text>
