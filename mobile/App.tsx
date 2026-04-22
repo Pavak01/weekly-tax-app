@@ -1400,8 +1400,19 @@ export default function App(): React.JSX.Element {
     });
 
     if (!response.ok) {
-      const payload = await response.json();
-      throw new Error(payload.error || "Failed to clear week data");
+      const raw = await response.text();
+      let message = "Failed to clear week data";
+      if (raw) {
+        try {
+          const payload = JSON.parse(raw) as { error?: string };
+          if (payload?.error) {
+            message = payload.error;
+          }
+        } catch {
+          message = raw;
+        }
+      }
+      throw new Error(message);
     }
 
     setModeLock(null);
@@ -1422,8 +1433,19 @@ export default function App(): React.JSX.Element {
     });
 
     if (!response.ok) {
-      const payload = await response.json();
-      throw new Error(payload.error || "Failed to clear all data");
+      const raw = await response.text();
+      let message = "Failed to clear all data";
+      if (raw) {
+        try {
+          const payload = JSON.parse(raw) as { error?: string };
+          if (payload?.error) {
+            message = payload.error;
+          }
+        } catch {
+          message = raw;
+        }
+      }
+      throw new Error(message);
     }
 
     setModeLock(null);

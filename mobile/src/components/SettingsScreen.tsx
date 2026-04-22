@@ -66,7 +66,8 @@ export function SettingsScreen({
           await onClearWeek(currentWeekStartDate);
           showMessage("Success", `This ${periodLabel}'s data has been cleared.`);
         } catch (error) {
-          showMessage("Error", `Failed to clear this ${periodLabel}'s data.`);
+          const message = error instanceof Error ? error.message : `Failed to clear this ${periodLabel}'s data.`;
+          showMessage("Error", message);
         } finally {
           setClearingWeek(false);
         }
@@ -84,7 +85,8 @@ export function SettingsScreen({
           await onClearAll();
           showMessage("Success", "All your data has been cleared. You can start fresh.");
         } catch (error) {
-          showMessage("Error", "Failed to clear all data.");
+          const message = error instanceof Error ? error.message : "Failed to clear all data.";
+          showMessage("Error", message);
         } finally {
           setClearingAll(false);
         }
