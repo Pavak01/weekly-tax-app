@@ -1962,34 +1962,37 @@ app.delete("/weekly-entry/:weekStartDate", requireAuth, async (req: Request, res
 app.delete("/all-entries", requireAuth, async (req: Request, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const client = await db.connect();
+  let failedStep = "unknown";
   try {
     await client.query("BEGIN");
 
-    await client.query(
-      `DELETE FROM expenses
-       WHERE weekly_entry_id IN (
-         SELECT id FROM weekly_entries WHERE user_id = $1
-       )`,
+    failedStep = "select weekly entries";
+    const weeklyEntries = await client.query<{ id: string }>(
+      "SELECT id FROM weekly_entries WHERE user_id = $1",
       [authReq.userId]
     );
 
-    await client.query(
-      `DELETE FROM receipts
-       WHERE weekly_entry_id IN (
-         SELECT id FROM weekly_entries WHERE user_id = $1
-       )`,
-      [authReq.userId]
-    );
+    const weeklyEntryIds = weeklyEntries.rows.map((row) => row.id);
 
-    await client.query("DELETE FROM weekly_entries WHERE user_id = $1", [authReq.userId]);
+    if (weeklyEntryIds.length > 0) {
+      failedStep = "delete receipts";
+      await client.query("DELETE FROM receipts WHERE weekly_entry_id = ANY($1::uuid[])", [weeklyEntryIds]);
 
+      failedStep = "delete expenses";
+      await client.query("DELETE FROM expenses WHERE weekly_entry_id = ANY($1::uuid[])", [weeklyEntryIds]);
+
+      failedStep = "delete weekly entries";
+      await client.query("DELETE FROM weekly_entries WHERE id = ANY($1::uuid[])", [weeklyEntryIds]);
+    }
+
+    failedStep = "delete tax summaries";
     await client.query("DELETE FROM tax_summaries WHERE user_id = $1", [authReq.userId]);
 
     await client.query("COMMIT");
     return res.status(204).send();
   } catch (error) {
     await client.query("ROLLBACK");
-    return sendError(res, 500, "Failed to delete all entries", error);
+    return sendError(res, 500, `Failed to delete all entries (${failedStep})`, error);
   } finally {
     client.release();
   }
