@@ -35,7 +35,7 @@ const QUICK_STATE_KEY = "weekly-tax-app:quick-state:v1";
 const AUTH_STATE_KEY = "weekly-tax-app:auth-state:v1";
 
 type Screen = "week" | "summary" | "export" | "admin" | "guide" | "settings";
-type EntryMode = "weekly" | "daily";
+type EntryMode = "weekly" | "monthly";
 
 type AuthUser = {
   id: string;
@@ -147,6 +147,14 @@ export default function App(): React.JSX.Element {
     net_profit: number;
     estimated_income_tax: number;
     estimated_ni: number;
+    weekly_breakdown: Array<{
+      period_start: string;
+      period_label: string;
+      entries_logged: number;
+      total_income: number;
+      total_expenses: number;
+      net_profit: number;
+    }>;
     monthly_breakdown: Array<{
       month: string;
       month_label: string;
@@ -241,11 +249,11 @@ export default function App(): React.JSX.Element {
   }, [estimatedTax]);
 
   const resolvedWeekStart = useMemo(
-    () => (entryMode === "daily" ? getWeekStartFromDate(entryDate) : weekStartDate),
+    () => (entryMode === "monthly" ? getMonthStartFromDate(entryDate) : weekStartDate),
     [entryDate, entryMode, weekStartDate]
   );
   const canGoToNextWeek = useMemo(() => {
-    if (entryMode === "daily") {
+    if (entryMode === "monthly") {
       const entryDateIso = parseDisplayDateToIso(entryDate);
       return !!entryDateIso && entryDateIso < getTodayIsoDate();
     }
@@ -295,13 +303,23 @@ export default function App(): React.JSX.Element {
           return;
         }
 
-        setModeLock(payload);
+        const lockedMode = normalizeEntryMode(payload.locked_mode);
+        const normalizedPayload: EntryModeLock = {
+          locked: Boolean(payload.locked),
+          locked_mode: lockedMode ?? undefined,
+          week_start_date: String(payload.week_start_date ?? resolvedWeekStartIso),
+          existing_entry_dates: Array.isArray(payload.existing_entry_dates)
+            ? payload.existing_entry_dates.map((value) => String(value))
+            : []
+        };
 
-        if (payload.locked && payload.locked_mode && payload.locked_mode !== entryMode) {
-          setEntryMode(payload.locked_mode);
+        setModeLock(normalizedPayload);
+
+        if (normalizedPayload.locked && normalizedPayload.locked_mode && normalizedPayload.locked_mode !== entryMode) {
+          setEntryMode(normalizedPayload.locked_mode);
           setStatus({
             kind: "info",
-            text: `This week is already locked to ${payload.locked_mode} mode.`
+            text: `This period is already locked to ${normalizedPayload.locked_mode} mode.`
           });
         }
       } catch {
@@ -329,7 +347,7 @@ export default function App(): React.JSX.Element {
             taxYear?: string;
             summaryAsOfDate?: string;
             weekStartDate?: string;
-            entryMode?: EntryMode;
+            entryMode?: string;
             entryDate?: string;
             serviceCompany?: string;
           };
@@ -343,8 +361,9 @@ export default function App(): React.JSX.Element {
           if (quick.weekStartDate) {
             setWeekStartDate(normalizeStoredDate(quick.weekStartDate, getCurrentMondayDisplayDate()));
           }
-          if (quick.entryMode) {
-            setEntryMode(quick.entryMode);
+          const restoredEntryMode = normalizeEntryMode(quick.entryMode);
+          if (restoredEntryMode) {
+            setEntryMode(restoredEntryMode);
           }
           if (quick.entryDate) {
             setEntryDate(normalizeStoredDate(quick.entryDate, getTodayDisplayDate()));
@@ -468,6 +487,12 @@ export default function App(): React.JSX.Element {
     return formatIsoToDisplayDate(getTodayIsoDate());
   }
 
+  function getCurrentMonthStartDisplayDate(): string {
+    const now = new Date();
+    now.setUTCDate(1);
+    return formatIsoToDisplayDate(now.toISOString().slice(0, 10));
+  }
+
   function getCurrentMondayDisplayDate(): string {
     const now = new Date();
     const utcDay = now.getUTCDay();
@@ -561,6 +586,17 @@ export default function App(): React.JSX.Element {
     return formatIsoToDisplayDate(date.toISOString().slice(0, 10));
   }
 
+  function getMonthStartFromDate(value: string): string {
+    const isoDate = parseDisplayDateToIso(value);
+    if (!isoDate) {
+      return value;
+    }
+
+    const date = new Date(`${isoDate}T00:00:00Z`);
+    date.setUTCDate(1);
+    return formatIsoToDisplayDate(date.toISOString().slice(0, 10));
+  }
+
   function addDaysToDisplayDate(value: string, days: number): string {
     const isoDate = parseDisplayDateToIso(value);
     if (!isoDate) {
@@ -572,14 +608,38 @@ export default function App(): React.JSX.Element {
     return formatIsoToDisplayDate(date.toISOString().slice(0, 10));
   }
 
+  function addMonthsToDisplayDate(value: string, months: number): string {
+    const isoDate = parseDisplayDateToIso(value);
+    if (!isoDate) {
+      return value;
+    }
+
+    const date = new Date(`${isoDate}T00:00:00Z`);
+    date.setUTCDate(1);
+    date.setUTCMonth(date.getUTCMonth() + months);
+    return formatIsoToDisplayDate(date.toISOString().slice(0, 10));
+  }
+
+  function normalizeEntryMode(value: unknown): EntryMode | null {
+    if (value === "weekly") {
+      return "weekly";
+    }
+
+    if (value === "monthly" || value === "daily") {
+      return "monthly";
+    }
+
+    return null;
+  }
+
   function handleEntryModeChange(nextMode: EntryMode): void {
     if (modeLock?.locked && modeLock.locked_mode && modeLock.locked_mode !== nextMode) {
       Alert.alert(
-        "Week locked",
-        `This week is already using ${modeLock.locked_mode} mode. The same mode will remain in effect until next week.`
+        "Period locked",
+        `This period is already using ${modeLock.locked_mode} mode. The same mode will remain in effect until the next period.`
       );
       setEntryMode(modeLock.locked_mode);
-      setStatus({ kind: "info", text: `This week is locked to ${modeLock.locked_mode} mode.` });
+      setStatus({ kind: "info", text: `This period is locked to ${modeLock.locked_mode} mode.` });
       return;
     }
 
@@ -591,14 +651,14 @@ export default function App(): React.JSX.Element {
     setWeekStartDate(getCurrentMondayDisplayDate());
   }
 
-  function setToday(): void {
-    handleEntryModeChange("daily");
+  function setThisMonth(): void {
+    handleEntryModeChange("monthly");
     setEntryDate(getTodayDisplayDate());
   }
 
   function goToPreviousWeek(): void {
-    if (entryMode === "daily") {
-      setEntryDate((current) => addDaysToDisplayDate(current, -7));
+    if (entryMode === "monthly") {
+      setEntryDate((current) => addMonthsToDisplayDate(current, -1));
       return;
     }
 
@@ -606,8 +666,8 @@ export default function App(): React.JSX.Element {
   }
 
   function goToNextWeek(): void {
-    if (entryMode === "daily") {
-      const nextEntryDate = addDaysToDisplayDate(entryDate, 7);
+    if (entryMode === "monthly") {
+      const nextEntryDate = addMonthsToDisplayDate(entryDate, 1);
       const nextEntryDateIso = parseDisplayDateToIso(nextEntryDate);
 
       if (nextEntryDateIso && nextEntryDateIso <= getTodayIsoDate()) {
@@ -678,6 +738,19 @@ export default function App(): React.JSX.Element {
     setTravel("35");
     setTravelReimbursed("0");
     setFood("8");
+    setFoodReimbursed("0");
+    setOther("0");
+    setOtherReimbursed("0");
+  }
+
+  function resetEntryDraft(): void {
+    setServiceCompany("");
+    setIncome("0");
+    setFuel("0");
+    setFuelReimbursed("0");
+    setTravel("0");
+    setTravelReimbursed("0");
+    setFood("0");
     setFoodReimbursed("0");
     setOther("0");
     setOtherReimbursed("0");
@@ -1204,12 +1277,12 @@ export default function App(): React.JSX.Element {
 
   function confirmWeeklyEntrySubmission(): void {
     Alert.alert(
-      entryMode === "daily" ? "Confirm daily submission" : "Confirm weekly submission",
+      entryMode === "monthly" ? "Confirm monthly submission" : "Confirm weekly submission",
       "Please check your figures carefully. After submission, this record is locked and changes cannot be made.",
       [
         { text: "Cancel", style: "cancel" },
         {
-          text: entryMode === "daily" ? "Submit day" : "Submit week",
+          text: entryMode === "monthly" ? "Submit month" : "Submit week",
           style: "destructive",
           onPress: () => {
             void submitWeeklyEntry();
@@ -1225,16 +1298,16 @@ export default function App(): React.JSX.Element {
       return;
     }
 
-    const effectiveDate = entryMode === "daily" ? entryDate : weekStartDate;
-    const effectiveWeekStartDate = entryMode === "daily" ? getWeekStartFromDate(entryDate) : weekStartDate;
+    const effectiveDate = entryMode === "monthly" ? entryDate : weekStartDate;
+    const effectiveWeekStartDate = entryMode === "monthly" ? getMonthStartFromDate(entryDate) : weekStartDate;
     const effectiveDateIso = parseDisplayDateToIso(effectiveDate);
     const effectiveWeekStartDateIso = parseDisplayDateToIso(effectiveWeekStartDate);
 
     if (!effectiveDateIso || !effectiveWeekStartDateIso) {
       Alert.alert(
         "Validation",
-        entryMode === "daily"
-          ? "Entry date must be in DD-MM-YYYY format."
+        entryMode === "monthly"
+          ? "Month date must be in DD-MM-YYYY format."
           : "Week start date must be in DD-MM-YYYY format."
       );
       setStatus({ kind: "error", text: "Date format is invalid." });
@@ -1254,7 +1327,7 @@ export default function App(): React.JSX.Element {
     }
 
     setIsSavingWeek(true);
-    setStatus({ kind: "info", text: entryMode === "daily" ? "Saving daily entry..." : "Saving weekly entry..." });
+    setStatus({ kind: "info", text: entryMode === "monthly" ? "Saving monthly entry..." : "Saving weekly entry..." });
 
     try {
       const response = await authedFetch("/weekly-entry", {
@@ -1271,13 +1344,14 @@ export default function App(): React.JSX.Element {
 
       const payload = await response.json();
       if (!response.ok) {
-        if (payload.locked_mode === "daily" || payload.locked_mode === "weekly") {
+        const lockedMode = normalizeEntryMode(payload.locked_mode);
+        if (lockedMode) {
           setModeLock({
             locked: true,
-            locked_mode: payload.locked_mode,
+            locked_mode: lockedMode,
             week_start_date: payload.week_start_date || effectiveWeekStartDateIso
           });
-          setEntryMode(payload.locked_mode);
+          setEntryMode(lockedMode);
         }
 
         Alert.alert("Error", payload.error || "Failed to submit entry");
@@ -1291,7 +1365,7 @@ export default function App(): React.JSX.Element {
         locked: true,
         locked_mode: entryMode,
         week_start_date: effectiveWeekStartDateIso,
-        existing_entry_dates: entryMode === "daily" ? [effectiveDateIso] : [effectiveWeekStartDateIso]
+        existing_entry_dates: entryMode === "monthly" ? [effectiveDateIso] : [effectiveWeekStartDateIso]
       });
       setCurrentWeekId(payload.weekly_entry_id ?? null);
       if (payload.weekly_entry_id) {
@@ -1301,14 +1375,14 @@ export default function App(): React.JSX.Element {
       setStatus({
         kind: "info",
         text:
-          entryMode === "daily"
-            ? `Daily entry saved into week starting ${effectiveWeekStartDate}.`
+          entryMode === "monthly"
+            ? `Monthly entry saved into month starting ${effectiveWeekStartDate}.`
             : "Weekly entry saved and locked with timestamp."
       });
       Alert.alert(
         "Saved",
-        entryMode === "daily"
-          ? `Daily entry recorded for ${effectiveDate}.`
+        entryMode === "monthly"
+          ? `Monthly entry recorded for ${effectiveDate}.`
           : "Weekly entry locked and recorded."
       );
     } catch (error) {
@@ -1335,7 +1409,15 @@ export default function App(): React.JSX.Element {
     }
 
     setModeLock(null);
-    setStatus({ kind: "info", text: "This week's data has been cleared." });
+    setSetAside(null);
+    setEstimatedTax(null);
+    setCurrentWeekId(null);
+    setReceipts([]);
+    setSummary(null);
+    setExportData("");
+    setLastSavedAt(null);
+    resetEntryDraft();
+    setStatus({ kind: "info", text: entryMode === "monthly" ? "This month's data has been cleared." : "This week's data has been cleared." });
   }
 
   async function clearAllData(): Promise<void> {
@@ -1352,7 +1434,11 @@ export default function App(): React.JSX.Element {
     setSetAside(null);
     setEstimatedTax(null);
     setCurrentWeekId(null);
+    setReceipts([]);
+    setSummary(null);
+    setExportData("");
     setLastSavedAt(null);
+    resetEntryDraft();
     setStatus({ kind: "info", text: "All data has been cleared." });
   }
 
@@ -1401,6 +1487,16 @@ export default function App(): React.JSX.Element {
         net_profit: Number(payload.net_profit ?? 0),
         estimated_income_tax: Number(payload.estimated_income_tax ?? 0),
         estimated_ni: Number(payload.estimated_ni ?? 0),
+        weekly_breakdown: Array.isArray(payload.weekly_breakdown)
+          ? payload.weekly_breakdown.map((week: Record<string, unknown>) => ({
+              period_start: String(week.period_start ?? ""),
+              period_label: String(week.period_label ?? week.period_start ?? ""),
+              entries_logged: Number(week.entries_logged ?? 0),
+              total_income: Number(week.total_income ?? 0),
+              total_expenses: Number(week.total_expenses ?? 0),
+              net_profit: Number(week.net_profit ?? 0)
+            }))
+          : [],
         monthly_breakdown: Array.isArray(payload.monthly_breakdown)
           ? payload.monthly_breakdown.map((month: Record<string, unknown>) => ({
               month: String(month.month ?? ""),
@@ -1874,52 +1970,53 @@ export default function App(): React.JSX.Element {
               )}
 
               {screen === "week" && (
-                <FormSection title={entryMode === "daily" ? "Daily Entry" : "This Week"}>
+                <FormSection title={entryMode === "monthly" ? "Monthly Entry" : "This Week"}>
                   <View style={styles.quickActionsRow}>
                     <SmallAction
                       label="Weekly Mode"
                       onPress={() => handleEntryModeChange("weekly")}
                       active={entryMode === "weekly"}
-                      disabled={modeLock?.locked_mode === "daily"}
+                      disabled={modeLock?.locked_mode === "monthly"}
                     />
                     <SmallAction
-                      label="Daily Mode"
-                      onPress={() => handleEntryModeChange("daily")}
-                      active={entryMode === "daily"}
+                      label="Monthly Mode"
+                      onPress={() => handleEntryModeChange("monthly")}
+                      active={entryMode === "monthly"}
                       disabled={modeLock?.locked_mode === "weekly"}
                     />
                   </View>
                   <Text style={styles.noteText}>
-                    {entryMode === "daily"
-                      ? `Daily entries roll into the week starting ${resolvedWeekStart}.`
+                    {entryMode === "monthly"
+                      ? `Monthly entries roll into the month starting ${resolvedWeekStart}.`
                       : "Weekly mode records the full week in one submission."}
                   </Text>
                   {modeLock?.locked && modeLock.locked_mode && (
                     <Text style={[styles.noteText, { color: colors.accent, fontWeight: "700" }]}>
-                      This week is locked to {modeLock.locked_mode} mode until next week.
+                      This period is locked to {modeLock.locked_mode} mode until the next period.
                     </Text>
                   )}
                   <View style={styles.quickActionsRow}>
-                    <SmallAction label="Previous Week" onPress={goToPreviousWeek} />
-                    <SmallAction label="Next Week" onPress={goToNextWeek} disabled={!canGoToNextWeek} />
+                    <SmallAction label={entryMode === "monthly" ? "Previous Month" : "Previous Week"} onPress={goToPreviousWeek} />
+                    <SmallAction label={entryMode === "monthly" ? "Next Month" : "Next Week"} onPress={goToNextWeek} disabled={!canGoToNextWeek} />
                   </View>
                   <View style={styles.quickActionsRow}>
-                    {entryMode === "daily" ? (
-                      <SmallAction label="Use Today" onPress={setToday} />
+                    {entryMode === "monthly" ? (
+                      <SmallAction label="Use This Month" onPress={setThisMonth} />
                     ) : (
                       <SmallAction label="Use This Monday" onPress={setThisMonday} />
                     )}
                     <SmallAction label="Fill Typical Expenses" onPress={fillQuickExpensePreset} />
                   </View>
-                  {entryMode === "daily" ? (
+                  {entryMode === "monthly" ? (
                     <>
                       <Field
-                        label="Entry Date (DD-MM-YYYY)"
+                        label="Month Reference Date (DD-MM-YYYY)"
                         value={entryDate}
                         onChange={handleEntryDateChange}
-                        placeholder="18-04-2026"
+                        placeholder="22-04-2026"
                       />
-                      <Text style={styles.noteText}>Weekly bucket: {resolvedWeekStart}</Text>
+                      <Text style={styles.noteText}>Monthly bucket: {resolvedWeekStart}</Text>
+                      <Text style={styles.noteText}>Use any date inside the month you want to review or submit.</Text>
                     </>
                   ) : (
                     <Field
@@ -1936,7 +2033,7 @@ export default function App(): React.JSX.Element {
                     placeholder="Agency, operator or platform"
                   />
                   <Field
-                    label={entryMode === "daily" ? "Income for this day (£)" : "Income (£)"}
+                    label={entryMode === "monthly" ? "Income for this month (£)" : "Income (£)"}
                     value={income}
                     onChange={setIncome}
                     keyboardType="decimal-pad"
@@ -1976,10 +2073,10 @@ export default function App(): React.JSX.Element {
                   <View style={styles.previewRow}>
                     <PreviewPill label="Gross expenses" value={expensePreview.totalGross} />
                     <PreviewPill label="Claimable" value={expensePreview.totalClaimable} />
-                    <PreviewPill label={entryMode === "daily" ? "Daily profit" : "Weekly profit"} value={expensePreview.profit} />
+                    <PreviewPill label={entryMode === "monthly" ? "Monthly profit" : "Weekly profit"} value={expensePreview.profit} />
                   </View>
 
-                  <Text style={styles.noteText}>Use DD-MM-YYYY. Entries default to today or this Monday, and future dates are blocked.</Text>
+                  <Text style={styles.noteText}>Use DD-MM-YYYY. Entries default to this month or this Monday, and future dates are blocked.</Text>
                   <Text style={[styles.noteText, { color: colors.accent, fontWeight: "700" }]}>Warning: once submitted, this entry is locked and cannot be changed.</Text>
                   <Text style={styles.noteText}>Expenses reimbursed: £{expensePreview.totalReimbursed.toFixed(2)}</Text>
 
@@ -1991,7 +2088,7 @@ export default function App(): React.JSX.Element {
                     {isSavingWeek ? (
                       <ActivityIndicator color={colors.accentText} />
                     ) : (
-                      <Text style={styles.primaryButtonText}>{entryMode === "daily" ? "Save Daily Entry" : "Save Weekly Entry"}</Text>
+                      <Text style={styles.primaryButtonText}>{entryMode === "monthly" ? "Save Monthly Entry" : "Save Weekly Entry"}</Text>
                     )}
                   </Pressable>
 
@@ -2001,7 +2098,7 @@ export default function App(): React.JSX.Element {
                   <View style={styles.receiptsBlock}>
                     <Text style={styles.subSection}>Receipts</Text>
                     {!currentWeekId && (
-                      <Text style={styles.noteText}>Save this weekly entry first to attach receipts.</Text>
+                      <Text style={styles.noteText}>Save this entry first to attach receipts.</Text>
                     )}
                     {!!currentWeekId && (
                       <>
@@ -2048,8 +2145,8 @@ export default function App(): React.JSX.Element {
                   </View>
 
                   <Text style={styles.noteText}>
-                    {entryMode === "daily"
-                      ? "Daily entries feed the same weekly and annual tax estimate view."
+                    {entryMode === "monthly"
+                      ? "Monthly entries feed the same monthly and annual tax estimate view."
                       : "Estimate only. Final liability depends on full-year position."}
                   </Text>
                 </FormSection>
@@ -2093,6 +2190,21 @@ export default function App(): React.JSX.Element {
                       </View>
                       {!!summary.updated_at && (
                         <Text style={styles.noteText}>Summary audit timestamp: {formatAuditTimestamp(summary.updated_at)}</Text>
+                      )}
+                      {!!summary.weekly_breakdown.length && (
+                        <>
+                          <Text style={styles.subSection}>Weekly Review</Text>
+                          {summary.weekly_breakdown.map((week) => (
+                            <View key={week.period_start} style={styles.summaryBox}>
+                              <Text style={styles.noteText}>
+                                {week.period_label} • {week.entries_logged} logged entries.
+                              </Text>
+                              <SummaryRow label="Income" value={week.total_income} />
+                              <SummaryRow label="Expenses" value={week.total_expenses} />
+                              <SummaryRow label="Net profit" value={week.net_profit} />
+                            </View>
+                          ))}
+                        </>
                       )}
                       {!!summary.monthly_breakdown.length && (
                         <>
@@ -2313,7 +2425,7 @@ export default function App(): React.JSX.Element {
                 <FormSection title="User Guide & FAQ">
                   <Text style={styles.subSection}>Quick User Guide</Text>
                   <Text style={styles.guideItem}>1. Sign in or create your account.</Text>
-                  <Text style={styles.guideItem}>2. Choose weekly or daily mode, then enter income and expenses.</Text>
+                  <Text style={styles.guideItem}>2. Choose weekly or monthly mode, then enter income and expenses.</Text>
                   <Text style={styles.guideItem}>3. Add any reimbursed expenses so the claimable total stays accurate.</Text>
                   <Text style={styles.guideItem}>4. Confirm the submission warning before saving your locked record.</Text>
                   <Text style={styles.guideItem}>5. Upload receipts after saving the weekly entry.</Text>
@@ -2421,6 +2533,7 @@ export default function App(): React.JSX.Element {
                 <SettingsScreen
                   email={authUser?.email || ""}
                   currentWeekStartDate={parseDisplayDateToIso(resolvedWeekStart) || getTodayIsoDate()}
+                  entryMode={entryMode}
                   onClearWeek={clearWeekData}
                   onClearAll={clearAllData}
                 />

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Card, DangerAction } from "./Controls";
 import { colors, spacing, typography } from "../theme/tokens";
 
@@ -8,6 +8,7 @@ type SettingsScreenProps = {
   onClearWeek: (weekStartDate: string) => Promise<void>;
   onClearAll: () => Promise<void>;
   currentWeekStartDate: string;
+  entryMode: "weekly" | "monthly";
   isLoading?: boolean;
 };
 
@@ -16,58 +17,78 @@ export function SettingsScreen({
   onClearWeek,
   onClearAll,
   currentWeekStartDate,
+  entryMode,
   isLoading = false
 }: SettingsScreenProps): React.JSX.Element {
   const [clearingWeek, setClearingWeek] = useState(false);
   const [clearingAll, setClearingAll] = useState(false);
+  const periodLabel = entryMode === "monthly" ? "month" : "week";
+  const clearCurrentLabel = entryMode === "monthly" ? "Clear This Month" : "Clear This Week";
+    const browserApi = globalThis as typeof globalThis & {
+      alert?: (message?: string) => void;
+      confirm?: (message?: string) => boolean;
+    };
+
+  function showMessage(title: string, message: string): void {
+      if (Platform.OS === "web" && typeof browserApi.alert === "function") {
+        browserApi.alert(`${title}\n\n${message}`);
+      return;
+    }
+
+    Alert.alert(title, message);
+  }
+
+  function confirmAction(title: string, message: string, onConfirm: () => void): void {
+    if (Platform.OS === "web" && typeof browserApi.confirm === "function") {
+      if (browserApi.confirm(`${title}\n\n${message}`)) {
+        onConfirm();
+      }
+      return;
+    }
+
+    Alert.alert(title, message, [
+      { text: "Cancel", onPress: () => {}, style: "cancel" },
+      {
+        text: "Delete",
+        onPress: onConfirm,
+        style: "destructive"
+      }
+    ]);
+  }
 
   const handleClearThisWeek = (): void => {
-    Alert.alert(
-      "Clear This Week?",
-      "This will delete all entries for this week. This action cannot be undone.",
-      [
-        { text: "Cancel", onPress: () => {}, style: "cancel" },
-        {
-          text: "Delete",
-          onPress: async () => {
-            setClearingWeek(true);
-            try {
-              await onClearWeek(currentWeekStartDate);
-              Alert.alert("Success", "This week's data has been cleared.");
-            } catch (error) {
-              Alert.alert("Error", "Failed to clear this week's data.");
-            } finally {
-              setClearingWeek(false);
-            }
-          },
-          style: "destructive"
+    confirmAction(
+      `Clear This ${entryMode === "monthly" ? "Month" : "Week"}?`,
+      `This will delete all entries for this ${periodLabel}. This action cannot be undone.`,
+      async () => {
+        setClearingWeek(true);
+        try {
+          await onClearWeek(currentWeekStartDate);
+          showMessage("Success", `This ${periodLabel}'s data has been cleared.`);
+        } catch (error) {
+          showMessage("Error", `Failed to clear this ${periodLabel}'s data.`);
+        } finally {
+          setClearingWeek(false);
         }
-      ]
+      }
     );
   };
 
   const handleClearAll = (): void => {
-    Alert.alert(
+    confirmAction(
       "Clear All Data?",
       "This will permanently delete ALL your entries and cannot be undone. Your account will remain active.",
-      [
-        { text: "Cancel", onPress: () => {}, style: "cancel" },
-        {
-          text: "Delete All",
-          onPress: async () => {
-            setClearingAll(true);
-            try {
-              await onClearAll();
-              Alert.alert("Success", "All your data has been cleared. You can start fresh.");
-            } catch (error) {
-              Alert.alert("Error", "Failed to clear all data.");
-            } finally {
-              setClearingAll(false);
-            }
-          },
-          style: "destructive"
+      async () => {
+        setClearingAll(true);
+        try {
+          await onClearAll();
+          showMessage("Success", "All your data has been cleared. You can start fresh.");
+        } catch (error) {
+          showMessage("Error", "Failed to clear all data.");
+        } finally {
+          setClearingAll(false);
         }
-      ]
+      }
     );
   };
 
@@ -90,8 +111,8 @@ export function SettingsScreen({
         <Text style={styles.label}>Data Management</Text>
         <View style={styles.actionGroup}>
           <DangerAction
-            label="Clear This Week"
-            sublabel="Delete all entries for the current week"
+            label={clearCurrentLabel}
+            sublabel={`Delete all entries for the current ${periodLabel}`}
             onPress={handleClearThisWeek}
             disabled={clearingWeek || clearingAll}
             isLoading={clearingWeek}
@@ -115,7 +136,7 @@ export function SettingsScreen({
         </View>
         <View style={styles.infoRow}>
           <Text style={styles.infoLabel}>Purpose</Text>
-          <Text style={styles.infoValue}>Weekly tax tracking</Text>
+          <Text style={styles.infoValue}>Weekly and monthly tax tracking</Text>
         </View>
       </View>
     </ScrollView>

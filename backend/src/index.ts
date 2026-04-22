@@ -120,7 +120,7 @@ const expenseSchema = z.object({
 const weeklyEntrySchema = z.object({
   week_start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   entry_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  entry_mode: z.enum(["weekly", "daily"]).default("weekly"),
+  entry_mode: z.enum(["weekly", "monthly", "daily"]).default("weekly"),
   income_total: z.number().min(0),
   company_providing_services_for: z.string().max(200).nullable().optional(),
   expenses: z.array(expenseSchema).default([])
@@ -277,6 +277,16 @@ function getWeekStartFromIsoDate(value: string): string {
   const utcDay = date.getUTCDay();
   const offset = utcDay === 0 ? -6 : 1 - utcDay;
   date.setUTCDate(date.getUTCDate() + offset);
+  return date.toISOString().slice(0, 10);
+}
+
+function getMonthStartFromIsoDate(value: string): string {
+  const date = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  date.setUTCDate(1);
   return date.toISOString().slice(0, 10);
 }
 
@@ -904,9 +914,9 @@ app.post("/weekly-entry", requireAuth, async (req: Request, res: Response) => {
 
   const authReq = req as AuthenticatedRequest;
   const payload = parsed.data;
-  const taxYear = getTaxYearFromDate(payload.week_start_date);
   const entryMode = payload.entry_mode;
   const entryDate = payload.entry_date ?? payload.week_start_date;
+  const taxYear = getTaxYearFromDate(entryMode === "monthly" ? entryDate : payload.week_start_date);
 
   if (entryDate > getTodayIsoDate()) {
     return res.status(400).json({ error: "Entry date cannot be in the future." });
@@ -914,6 +924,10 @@ app.post("/weekly-entry", requireAuth, async (req: Request, res: Response) => {
 
   if (entryMode === "daily" && getWeekStartFromIsoDate(entryDate) !== payload.week_start_date) {
     return res.status(400).json({ error: "Daily entry date must belong to the selected week bucket." });
+  }
+
+  if (entryMode === "monthly" && getMonthStartFromIsoDate(entryDate) !== payload.week_start_date) {
+    return res.status(400).json({ error: "Monthly entry date must belong to the selected month bucket." });
   }
 
   let totalNetExpenses = 0;
@@ -948,7 +962,12 @@ app.post("/weekly-entry", requireAuth, async (req: Request, res: Response) => {
     );
 
     if (existingEntries.rows.length > 0) {
-      const lockedMode = existingEntries.rows[0].entry_mode === "daily" ? "daily" : "weekly";
+      const lockedMode =
+        existingEntries.rows[0].entry_mode === "daily"
+          ? "daily"
+          : existingEntries.rows[0].entry_mode === "monthly"
+            ? "monthly"
+            : "weekly";
 
       if (lockedMode !== entryMode) {
         await client.query("ROLLBACK");
@@ -963,6 +982,15 @@ app.post("/weekly-entry", requireAuth, async (req: Request, res: Response) => {
         await client.query("ROLLBACK");
         return res.status(409).json({
           error: "A weekly entry has already been recorded for this week and is locked.",
+          locked_mode: lockedMode,
+          week_start_date: payload.week_start_date
+        });
+      }
+
+      if (entryMode === "monthly") {
+        await client.query("ROLLBACK");
+        return res.status(409).json({
+          error: "A monthly entry has already been recorded for this month and is locked.",
           locked_mode: lockedMode,
           week_start_date: payload.week_start_date
         });
@@ -1512,11 +1540,15 @@ app.get("/summary/:taxYear", requireAuth, async (req: Request, res: Response) =>
   try {
     const rows = await db.query<{
       week_start_date: string;
+      entry_mode: string;
+      entry_date: string | null;
       created_at: string;
       income: string;
       expenses: string;
     }>(
       `SELECT we.week_start_date::text,
+              COALESCE(NULLIF(we.entry_mode, ''), 'weekly') AS entry_mode,
+              we.entry_date::text,
               we.created_at::text,
               we.income_total::text AS income,
               COALESCE(SUM(e.net_amount), 0)::text AS expenses
@@ -1536,6 +1568,16 @@ app.get("/summary/:taxYear", requireAuth, async (req: Request, res: Response) =>
 
     const totalIncome = rows.rows.reduce((sum, row) => sum + Number(row.income), 0);
     const totalExpenses = rows.rows.reduce((sum, row) => sum + Number(row.expenses), 0);
+    const weeklyBreakdownMap = new Map<
+      string,
+      {
+        period_start: string;
+        period_label: string;
+        entries_logged: number;
+        total_income: number;
+        total_expenses: number;
+      }
+    >();
     const monthlyBreakdownMap = new Map<
       string,
       {
@@ -1548,7 +1590,27 @@ app.get("/summary/:taxYear", requireAuth, async (req: Request, res: Response) =>
     >();
 
     for (const row of rows.rows) {
-      const month = row.week_start_date.slice(0, 7);
+      if (row.entry_mode === "weekly") {
+        const existingWeek = weeklyBreakdownMap.get(row.week_start_date);
+
+        if (existingWeek) {
+          existingWeek.entries_logged += 1;
+          existingWeek.total_income += Number(row.income);
+          existingWeek.total_expenses += Number(row.expenses);
+        } else {
+          const [year, month, day] = row.week_start_date.split("-");
+          weeklyBreakdownMap.set(row.week_start_date, {
+            period_start: row.week_start_date,
+            period_label: `Week of ${day}-${month}-${year}`,
+            entries_logged: 1,
+            total_income: Number(row.income),
+            total_expenses: Number(row.expenses)
+          });
+        }
+      }
+
+      const monthSource = row.entry_date ?? row.week_start_date;
+      const month = monthSource.slice(0, 7);
       const existingMonth = monthlyBreakdownMap.get(month);
 
       if (existingMonth) {
@@ -1590,6 +1652,12 @@ app.get("/summary/:taxYear", requireAuth, async (req: Request, res: Response) =>
       net_profit: Number(netProfit.toFixed(2)),
       estimated_income_tax: Number(estimate.estimated_income_tax.toFixed(2)),
       estimated_ni: Number(estimate.estimated_ni.toFixed(2)),
+      weekly_breakdown: Array.from(weeklyBreakdownMap.values()).map((week) => ({
+        ...week,
+        total_income: Number(week.total_income.toFixed(2)),
+        total_expenses: Number(week.total_expenses.toFixed(2)),
+        net_profit: Number((week.total_income - week.total_expenses).toFixed(2))
+      })),
       monthly_breakdown: Array.from(monthlyBreakdownMap.values()).map((month) => ({
         ...month,
         total_income: Number(month.total_income.toFixed(2)),
