@@ -32,6 +32,7 @@ Protected routes (Bearer token required):
 - `POST /admin/users/role` (grant/revoke admin role)
 - `GET /summary/:taxYear`
 - `GET /tax-estimate/:weekId`
+- `GET /audit/:taxYear` (entry-level audit payload with attached receipts and fresh signed `download_url` values)
 - `GET /export/:taxYear?format=json|csv`
 
 ## Notes

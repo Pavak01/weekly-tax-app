@@ -305,6 +305,36 @@ function getReceiptDownloadUrl(req: Request, userId: string, receiptId: string):
   return `${req.protocol}://${req.get("host")}/receipts/${receiptId}/download?token=${encodeURIComponent(token)}`;
 }
 
+async function deleteReceiptFiles(storagePaths: string[]): Promise<void> {
+  const uniquePaths = Array.from(
+    new Set(
+      storagePaths
+        .map((value) => String(value ?? "").trim())
+        .filter((value) => value.length > 0)
+    )
+  );
+
+  await Promise.all(
+    uniquePaths.map(async (storagePath) => {
+      const fileName = path.basename(storagePath);
+      const filePath = path.resolve(uploadsDir, fileName);
+
+      if (!filePath.startsWith(uploadsDir + path.sep)) {
+        return;
+      }
+
+      try {
+        await fs.promises.unlink(filePath);
+      } catch (error) {
+        const fileError = error as NodeJS.ErrnoException;
+        if (fileError.code !== "ENOENT") {
+          console.warn(`Failed to delete receipt file ${filePath}: ${fileError.message}`);
+        }
+      }
+    })
+  );
+}
+
 function generatePasswordResetCode(): string {
   return crypto.randomInt(100000, 1000000).toString();
 }
@@ -1762,6 +1792,115 @@ app.get("/tax-estimate/:weekId", requireAuth, async (req: Request, res: Response
   }
 });
 
+app.get("/audit/:taxYear", requireAuth, async (req: Request, res: Response) => {
+  const taxYear = String(req.params.taxYear ?? "").trim();
+  const authReq = req as AuthenticatedRequest;
+
+  if (!/^\d{4}-\d{2}$/.test(taxYear)) {
+    return res.status(400).json({ error: "Tax year must be in YYYY-YY format." });
+  }
+
+  try {
+    const entries = await db.query<{
+      id: string;
+      week_start_date: string;
+      entry_date: string | null;
+      entry_mode: string;
+      income_total: string;
+      company_providing_services_for: string | null;
+      created_at: string;
+      total_expenses: string;
+      net_profit: string;
+    }>(
+      `SELECT we.id,
+              we.week_start_date::text,
+              we.entry_date::text,
+              we.entry_mode,
+              we.income_total::text,
+              we.company_providing_services_for,
+              we.created_at::text,
+              COALESCE(SUM(e.net_amount), 0)::text AS total_expenses,
+              (we.income_total - COALESCE(SUM(e.net_amount), 0))::text AS net_profit
+       FROM weekly_entries we
+       LEFT JOIN expenses e ON e.weekly_entry_id = we.id
+       WHERE we.user_id = $1 AND we.tax_year = $2
+       GROUP BY we.id
+       ORDER BY we.week_start_date DESC, we.created_at DESC`,
+      [authReq.userId, taxYear]
+    );
+
+    const weeklyEntryIds = entries.rows.map((row) => row.id);
+    const receiptsByEntry = new Map<
+      string,
+      Array<{
+        id: string;
+        original_filename: string;
+        storage_path: string;
+        mime_type: string | null;
+        file_size_bytes: number;
+        created_at: string;
+        download_url: string;
+      }>
+    >();
+
+    if (weeklyEntryIds.length > 0) {
+      const receiptRows = await db.query<{
+        id: string;
+        weekly_entry_id: string;
+        original_filename: string;
+        storage_path: string;
+        mime_type: string | null;
+        file_size_bytes: string;
+        created_at: string;
+      }>(
+        `SELECT id, weekly_entry_id, original_filename, storage_path, mime_type,
+                file_size_bytes::text, created_at::text
+         FROM receipts
+         WHERE user_id = $1 AND weekly_entry_id = ANY($2::uuid[])
+         ORDER BY created_at DESC`,
+        [authReq.userId, weeklyEntryIds]
+      );
+
+      for (const row of receiptRows.rows) {
+        const receipt = {
+          id: row.id,
+          original_filename: row.original_filename,
+          storage_path: row.storage_path,
+          mime_type: row.mime_type,
+          file_size_bytes: Number(row.file_size_bytes),
+          created_at: row.created_at,
+          download_url: getReceiptDownloadUrl(req, authReq.userId, row.id)
+        };
+
+        const existing = receiptsByEntry.get(row.weekly_entry_id);
+        if (existing) {
+          existing.push(receipt);
+        } else {
+          receiptsByEntry.set(row.weekly_entry_id, [receipt]);
+        }
+      }
+    }
+
+    return res.json({
+      tax_year: taxYear,
+      entries: entries.rows.map((row) => ({
+        id: row.id,
+        week_start_date: row.week_start_date,
+        entry_date: row.entry_date,
+        entry_mode: row.entry_mode,
+        income_total: Number(row.income_total),
+        total_expenses: Number(row.total_expenses),
+        net_profit: Number(row.net_profit),
+        company_providing_services_for: row.company_providing_services_for,
+        created_at: row.created_at,
+        receipts: receiptsByEntry.get(row.id) ?? []
+      }))
+    });
+  } catch (error) {
+    return sendError(res, 500, "Failed to load audit data", error);
+  }
+});
+
 app.get("/export/:taxYear", requireAuth, async (req: Request, res: Response) => {
   const taxYear = req.params.taxYear;
   const authReq = req as AuthenticatedRequest;
@@ -1855,6 +1994,7 @@ app.get("/export/:taxYear", requireAuth, async (req: Request, res: Response) => 
 app.delete("/weekly-entry/:weekStartDate", requireAuth, async (req: Request, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const weekStartDate = String(req.params.weekStartDate ?? "").trim();
+  let receiptStoragePaths: string[] = [];
 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(weekStartDate)) {
     return res.status(400).json({ error: "Week start date must be in YYYY-MM-DD format." });
@@ -1875,6 +2015,15 @@ app.delete("/weekly-entry/:weekStartDate", requireAuth, async (req: Request, res
     }
 
     const taxYear = weekData.rows[0].tax_year;
+
+    const receiptRows = await client.query<{ storage_path: string }>(
+      `SELECT r.storage_path
+       FROM receipts r
+       JOIN weekly_entries we ON we.id = r.weekly_entry_id
+       WHERE we.user_id = $1 AND we.week_start_date = $2`,
+      [authReq.userId, weekStartDate]
+    );
+    receiptStoragePaths = receiptRows.rows.map((row) => row.storage_path);
 
     await client.query(
       `DELETE FROM expenses
@@ -1950,6 +2099,7 @@ app.delete("/weekly-entry/:weekStartDate", requireAuth, async (req: Request, res
     }
 
     await client.query("COMMIT");
+    await deleteReceiptFiles(receiptStoragePaths);
     return res.status(204).send();
   } catch (error) {
     await client.query("ROLLBACK");
@@ -1963,6 +2113,7 @@ app.delete("/all-entries", requireAuth, async (req: Request, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const client = await db.connect();
   let failedStep = "unknown";
+  let receiptStoragePaths: string[] = [];
   try {
     await client.query("BEGIN");
 
@@ -1975,6 +2126,13 @@ app.delete("/all-entries", requireAuth, async (req: Request, res: Response) => {
     const weeklyEntryIds = weeklyEntries.rows.map((row) => row.id);
 
     if (weeklyEntryIds.length > 0) {
+      failedStep = "select receipt files";
+      const receiptRows = await client.query<{ storage_path: string }>(
+        "SELECT storage_path FROM receipts WHERE weekly_entry_id = ANY($1::uuid[])",
+        [weeklyEntryIds]
+      );
+      receiptStoragePaths = receiptRows.rows.map((row) => row.storage_path);
+
       failedStep = "delete receipts";
       await client.query("DELETE FROM receipts WHERE weekly_entry_id = ANY($1::uuid[])", [weeklyEntryIds]);
 
@@ -1989,6 +2147,7 @@ app.delete("/all-entries", requireAuth, async (req: Request, res: Response) => {
     await client.query("DELETE FROM tax_summaries WHERE user_id = $1", [authReq.userId]);
 
     await client.query("COMMIT");
+    await deleteReceiptFiles(receiptStoragePaths);
     return res.status(204).send();
   } catch (error) {
     await client.query("ROLLBACK");
