@@ -208,6 +208,8 @@ export default function App(): React.JSX.Element {
   const [monitoringData, setMonitoringData] = useState<RuleMonitoringResponse | null>(null);
   const [auditEvents, setAuditEvents] = useState<RuleAuditEvent[]>([]);
   const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
+  const [auditModeFilter, setAuditModeFilter] = useState<"all" | EntryMode>("all");
+  const [auditCompanyFilter, setAuditCompanyFilter] = useState("");
   const [publishEffectiveFrom, setPublishEffectiveFrom] = useState(getCurrentMondayDisplayDate());
   const [publishSourceReference, setPublishSourceReference] = useState(
     "https://www.gov.uk/self-employed-national-insurance-rates"
@@ -296,6 +298,45 @@ export default function App(): React.JSX.Element {
   }, [entryDate, entryMode, weekStartDate]);
 
   const isAdmin = authUser?.role === "admin";
+
+  const filteredAuditEntries = useMemo(() => {
+    const companyFilter = auditCompanyFilter.trim().toLowerCase();
+
+    return auditEntries
+      .filter((entry) => {
+        if (auditModeFilter !== "all" && entry.entry_mode !== auditModeFilter) {
+          return false;
+        }
+
+        if (companyFilter.length === 0) {
+          return true;
+        }
+
+        return (entry.company_providing_services_for || "").toLowerCase().includes(companyFilter);
+      })
+      .sort((left, right) => {
+        const leftTime = new Date(left.created_at).getTime();
+        const rightTime = new Date(right.created_at).getTime();
+        return rightTime - leftTime;
+      });
+  }, [auditCompanyFilter, auditEntries, auditModeFilter]);
+
+  const groupedAuditEntries = useMemo(() => {
+    const sections = new Map<string, AuditEntry[]>();
+
+    filteredAuditEntries.forEach((entry) => {
+      const periodIso = (entry.entry_date || entry.week_start_date || "").slice(0, 10);
+      const parsed = new Date(`${periodIso}T00:00:00Z`);
+      const label = Number.isNaN(parsed.getTime())
+        ? "Unknown period"
+        : parsed.toLocaleString("en-GB", { month: "long", year: "numeric" });
+      const existing = sections.get(label) || [];
+      existing.push(entry);
+      sections.set(label, existing);
+    });
+
+    return Array.from(sections.entries()).map(([label, entries]) => ({ label, entries }));
+  }, [filteredAuditEntries]);
 
   useEffect(() => {
     if (!isAdmin && screen === "admin") {
@@ -2113,6 +2154,8 @@ export default function App(): React.JSX.Element {
 
               {screen === "week" && (
                 <SnapshotCard
+                  title={entryMode === "monthly" ? "Monthly Snapshot" : entryMode === "daily" ? "Daily Snapshot" : "Weekly Snapshot"}
+                  subtitle={`Current period starts ${resolvedWeekStart}`}
                   setAside={roundedSetAside}
                   estimatedTax={roundedTax}
                   claimable={`£${expensePreview.totalClaimable.toFixed(2)}`}
@@ -2120,6 +2163,12 @@ export default function App(): React.JSX.Element {
                   lastSavedAt={lastSavedAt}
                 />
               )}
+
+              <View style={styles.quickNavBar}>
+                <SmallAction label="Entry" onPress={() => setScreen("week")} active={screen === "week"} />
+                <SmallAction label="Audit" onPress={() => setScreen("audit")} active={screen === "audit"} />
+                <SmallAction label="Settings" onPress={() => setScreen("settings")} active={screen === "settings"} />
+              </View>
 
               {status && (
                 <Animated.View style={{ transform: [{ scale: statusPulse }] }}>
@@ -2133,6 +2182,14 @@ export default function App(): React.JSX.Element {
                     entryMode === "monthly" ? "Monthly Entry" : entryMode === "daily" ? "Daily Entry" : "This Week"
                   }
                 >
+                  <View style={styles.entryFocusCard}>
+                    <Text style={styles.entryFocusTitle}>
+                      {entryMode === "monthly" ? "Monthly workflow" : entryMode === "daily" ? "Daily workflow" : "Weekly workflow"}
+                    </Text>
+                    <Text style={styles.entryFocusText}>Current period start: {resolvedWeekStart}</Text>
+                    <Text style={styles.entryFocusText}>Complete details, then submit once for a locked audit-safe record.</Text>
+                  </View>
+
                   <View style={styles.periodSegment}>
                     <Pressable
                       onPress={() => handleEntryModeChange("weekly")}
@@ -2333,7 +2390,12 @@ export default function App(): React.JSX.Element {
                   </Pressable>
 
                   <View style={styles.saveStatusCard}>
-                    <Text style={styles.saveStatusTitle}>Submission status</Text>
+                    <View style={styles.saveStatusHeader}>
+                      <Text style={styles.saveStatusTitle}>Submission status</Text>
+                      <Text style={styles.saveStatusBadge}>
+                        {isSavingWeek ? "Saving" : lastSavedAt ? "Saved" : "Draft"}
+                      </Text>
+                    </View>
                     <Text style={styles.saveStatusText}>
                       {isSavingWeek
                         ? "Saving in progress..."
@@ -2341,6 +2403,7 @@ export default function App(): React.JSX.Element {
                           ? `Last saved: ${lastSavedAt}`
                           : "Not saved yet for this period."}
                     </Text>
+                    <Text style={styles.saveStatusHint}>Entries lock after save to protect audit history.</Text>
                   </View>
 
                   {setAside !== null && <Text style={styles.resultText}>Set aside £{setAside.toFixed(2)}</Text>}
@@ -2499,43 +2562,72 @@ export default function App(): React.JSX.Element {
                     )}
                   </Pressable>
 
-                  {!isLoadingAudit && auditEntries.length === 0 && (
+                  <View style={styles.quickActionsRow}>
+                    <SmallAction label="All" active={auditModeFilter === "all"} onPress={() => setAuditModeFilter("all")} />
+                    <SmallAction label="Weekly" active={auditModeFilter === "weekly"} onPress={() => setAuditModeFilter("weekly")} />
+                    <SmallAction label="Daily" active={auditModeFilter === "daily"} onPress={() => setAuditModeFilter("daily")} />
+                    <SmallAction label="Monthly" active={auditModeFilter === "monthly"} onPress={() => setAuditModeFilter("monthly")} />
+                  </View>
+                  <Field
+                    label="Filter by company (optional)"
+                    value={auditCompanyFilter}
+                    onChange={setAuditCompanyFilter}
+                    placeholder="Type company name"
+                  />
+                  <Text style={styles.noteText}>Showing {filteredAuditEntries.length} entries for the active filters.</Text>
+
+                  {!isLoadingAudit && filteredAuditEntries.length === 0 && (
                     <Text style={styles.noteText}>No audit entries loaded yet.</Text>
                   )}
 
-                  {auditEntries.map((entry) => (
-                    <View key={entry.id} style={styles.summaryBox}>
-                      <Text style={styles.label}>
-                        {entry.entry_mode === "monthly" ? "Monthly entry" : "Weekly entry"} • {formatIsoToDisplayDate(entry.week_start_date)}
-                      </Text>
-                      {!!entry.entry_date && (
-                        <Text style={styles.noteText}>Reference date: {formatIsoToDisplayDate(entry.entry_date)}</Text>
-                      )}
-                      {!!entry.company_providing_services_for && (
-                        <Text style={styles.noteText}>Company: {entry.company_providing_services_for}</Text>
-                      )}
-                      <SummaryRow label="Income" value={entry.income_total} />
-                      <SummaryRow label="Expenses" value={entry.total_expenses} />
-                      <SummaryRow label="Net profit" value={entry.net_profit} />
-                      <Text style={styles.noteText}>Saved at: {formatAuditTimestamp(entry.created_at)}</Text>
+                  {groupedAuditEntries.map((group) => (
+                    <View key={group.label} style={styles.auditGroup}>
+                      <Text style={styles.auditGroupTitle}>{group.label}</Text>
+                      {group.entries.map((entry) => (
+                        <View key={entry.id} style={styles.summaryBox}>
+                          <Text style={styles.label}>
+                            {entry.entry_mode === "monthly"
+                              ? "Monthly entry"
+                              : entry.entry_mode === "daily"
+                                ? "Daily entry"
+                                : "Weekly entry"}
+                            {" • "}
+                            {formatIsoToDisplayDate(entry.week_start_date)}
+                          </Text>
+                          {!!entry.entry_date && (
+                            <Text style={styles.noteText}>Reference date: {formatIsoToDisplayDate(entry.entry_date)}</Text>
+                          )}
+                          {!!entry.company_providing_services_for && (
+                            <Text style={styles.noteText}>Company: {entry.company_providing_services_for}</Text>
+                          )}
+                          <SummaryRow label="Income" value={entry.income_total} />
+                          <SummaryRow label="Expenses" value={entry.total_expenses} />
+                          <SummaryRow label="Net profit" value={entry.net_profit} />
+                          <Text style={styles.noteText}>Saved at: {formatAuditTimestamp(entry.created_at)}</Text>
 
-                      <Text style={styles.subSection}>Receipts ({entry.receipts.length})</Text>
-                      {entry.receipts.length === 0 && <Text style={styles.noteText}>No receipts attached.</Text>}
-                      {entry.receipts.length > 0 && (
-                        <View style={styles.receiptList}>
-                          {entry.receipts.map((receipt) => (
-                            <Pressable
-                              key={receipt.id}
-                              onPress={() => void openReceipt(receipt)}
-                              style={({ pressed }) => [styles.receiptItem, pressed && styles.receiptItemPressed]}
-                            >
-                              <Text style={styles.receiptName}>{receipt.original_filename}</Text>
-                              <Text style={styles.receiptMeta}>{Math.round(receipt.file_size_bytes / 1024)} KB</Text>
-                              <Text style={styles.receiptHint}>Tap to open or share</Text>
-                            </Pressable>
-                          ))}
+                          <Text style={styles.subSection}>Receipts ({entry.receipts.length})</Text>
+                          {entry.receipts.length === 0 && <Text style={styles.noteText}>No receipts attached.</Text>}
+                          {entry.receipts.length > 0 && (
+                            <View style={styles.receiptList}>
+                              {entry.receipts.map((receipt) => (
+                                <Pressable
+                                  key={receipt.id}
+                                  onPress={() => void openReceipt(receipt)}
+                                  style={({ pressed }) => [styles.receiptItem, pressed && styles.receiptItemPressed]}
+                                  disabled={openingReceiptId === receipt.id}
+                                >
+                                  <View style={styles.receiptRowTop}>
+                                    <Text style={styles.receiptName}>{receipt.original_filename}</Text>
+                                    {openingReceiptId === receipt.id && <ActivityIndicator size="small" color={colors.textMain} />}
+                                  </View>
+                                  <Text style={styles.receiptMeta}>{Math.round(receipt.file_size_bytes / 1024)} KB</Text>
+                                  <Text style={styles.receiptAction}>Open receipt</Text>
+                                </Pressable>
+                              ))}
+                            </View>
+                          )}
                         </View>
-                      )}
+                      ))}
                     </View>
                   ))}
                 </FormSection>
@@ -2959,6 +3051,32 @@ const styles = StyleSheet.create({
     marginTop: 8,
     marginBottom: 6
   },
+  quickNavBar: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginTop: -spacing.xs,
+    marginBottom: spacing.xs
+  },
+  entryFocusCard: {
+    marginBottom: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    backgroundColor: colors.accentSoftAlt,
+    gap: spacing.xs
+  },
+  entryFocusTitle: {
+    fontSize: typography.body,
+    fontWeight: "700",
+    color: colors.textMain
+  },
+  entryFocusText: {
+    fontSize: typography.small,
+    color: colors.textSecondary,
+    lineHeight: 18,
+    fontWeight: "600"
+  },
   receiptsBlock: {
     marginTop: spacing.md,
     paddingTop: spacing.sm,
@@ -3012,6 +3130,12 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontSize: typography.small,
     fontWeight: "600"
+  },
+  receiptAction: {
+    marginTop: 6,
+    color: colors.navTextActive,
+    fontSize: typography.small,
+    fontWeight: "700"
   },
   quickActionsRow: {
     flexDirection: "row",
@@ -3084,15 +3208,33 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accentSoftAlt,
     padding: spacing.md
   },
+  saveStatusHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: spacing.sm
+  },
   saveStatusTitle: {
     fontSize: typography.small,
     color: colors.textMain,
     fontWeight: "700"
   },
+  saveStatusBadge: {
+    fontSize: typography.micro,
+    color: colors.navTextActive,
+    fontWeight: "700",
+    textTransform: "uppercase"
+  },
   saveStatusText: {
     marginTop: 4,
     fontSize: typography.small,
     color: colors.textSecondary,
+    fontWeight: "600"
+  },
+  saveStatusHint: {
+    marginTop: 4,
+    fontSize: typography.small,
+    color: colors.textMuted,
     fontWeight: "600"
   },
   noteText: {
@@ -3119,6 +3261,17 @@ const styles = StyleSheet.create({
     padding: 10,
     borderRadius: radius.md,
     backgroundColor: colors.summaryBg
+  },
+  auditGroup: {
+    marginTop: spacing.md,
+    gap: spacing.sm
+  },
+  auditGroupTitle: {
+    fontSize: typography.small,
+    color: colors.textMain,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.6
   },
   exportBox: {
     marginTop: 10,

@@ -4,12 +4,16 @@ import { Card, SnapshotTile } from "./Controls";
 import { colors, spacing, typography } from "../theme/tokens";
 
 export function SnapshotCard({
+  title,
+  subtitle,
   setAside,
   estimatedTax,
   claimable,
   profit,
   lastSavedAt
 }: {
+  title: string;
+  subtitle: string;
   setAside: string;
   estimatedTax: string;
   claimable: string;
@@ -18,7 +22,8 @@ export function SnapshotCard({
 }): React.JSX.Element {
   return (
     <Card>
-      <Text style={styles.sectionTitle}>Weekly Snapshot</Text>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      <Text style={styles.sectionSubtitle}>{subtitle}</Text>
       <View style={styles.snapshotGrid}>
         <SnapshotTile label="Set Aside" value={setAside} />
         <SnapshotTile label="Est. Tax + NI" value={estimatedTax} />
@@ -34,8 +39,14 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: typography.h2,
     fontWeight: "700",
-    marginBottom: spacing.md,
+    marginBottom: spacing.xs,
     color: colors.textMain
+  },
+  sectionSubtitle: {
+    fontSize: typography.small,
+    color: colors.textSecondary,
+    marginBottom: spacing.md,
+    fontWeight: "600"
   },
   snapshotGrid: {
     flexDirection: "row",
