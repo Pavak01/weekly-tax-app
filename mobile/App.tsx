@@ -31,7 +31,7 @@ const QUICK_STATE_KEY = "weekly-tax-app:quick-state:v1";
 const AUTH_STATE_KEY = "weekly-tax-app:auth-state:v1";
 
 type Screen = "week" | "summary" | "audit" | "export" | "admin" | "guide" | "settings";
-type EntryMode = "weekly" | "monthly";
+type EntryMode = "weekly" | "monthly" | "daily";
 
 type AuthUser = {
   id: string;
@@ -271,11 +271,21 @@ export default function App(): React.JSX.Element {
   }, [estimatedTax]);
 
   const resolvedWeekStart = useMemo(
-    () => (entryMode === "monthly" ? getMonthStartFromDate(entryDate) : weekStartDate),
+    () =>
+      entryMode === "monthly"
+        ? getMonthStartFromDate(entryDate)
+        : entryMode === "daily"
+          ? getWeekStartFromDate(entryDate)
+          : weekStartDate,
     [entryDate, entryMode, weekStartDate]
   );
   const canGoToNextWeek = useMemo(() => {
     if (entryMode === "monthly") {
+      const entryDateIso = parseDisplayDateToIso(entryDate);
+      return !!entryDateIso && entryDateIso < getTodayIsoDate();
+    }
+
+    if (entryMode === "daily") {
       const entryDateIso = parseDisplayDateToIso(entryDate);
       return !!entryDateIso && entryDateIso < getTodayIsoDate();
     }
@@ -647,8 +657,12 @@ export default function App(): React.JSX.Element {
       return "weekly";
     }
 
-    if (value === "monthly" || value === "daily") {
+    if (value === "monthly") {
       return "monthly";
+    }
+
+    if (value === "daily") {
+      return "daily";
     }
 
     return null;
@@ -678,9 +692,19 @@ export default function App(): React.JSX.Element {
     setEntryDate(getTodayDisplayDate());
   }
 
+  function setToday(): void {
+    handleEntryModeChange("daily");
+    setEntryDate(getTodayDisplayDate());
+  }
+
   function goToPreviousWeek(): void {
     if (entryMode === "monthly") {
       setEntryDate((current) => addMonthsToDisplayDate(current, -1));
+      return;
+    }
+
+    if (entryMode === "daily") {
+      setEntryDate((current) => addDaysToDisplayDate(current, -1));
       return;
     }
 
@@ -690,6 +714,16 @@ export default function App(): React.JSX.Element {
   function goToNextWeek(): void {
     if (entryMode === "monthly") {
       const nextEntryDate = addMonthsToDisplayDate(entryDate, 1);
+      const nextEntryDateIso = parseDisplayDateToIso(nextEntryDate);
+
+      if (nextEntryDateIso && nextEntryDateIso <= getTodayIsoDate()) {
+        setEntryDate(nextEntryDate);
+      }
+      return;
+    }
+
+    if (entryMode === "daily") {
+      const nextEntryDate = addDaysToDisplayDate(entryDate, 1);
       const nextEntryDateIso = parseDisplayDateToIso(nextEntryDate);
 
       if (nextEntryDateIso && nextEntryDateIso <= getTodayIsoDate()) {
@@ -1299,12 +1333,16 @@ export default function App(): React.JSX.Element {
 
   function confirmWeeklyEntrySubmission(): void {
     Alert.alert(
-      entryMode === "monthly" ? "Confirm monthly submission" : "Confirm weekly submission",
+      entryMode === "monthly"
+        ? "Confirm monthly submission"
+        : entryMode === "daily"
+          ? "Confirm daily submission"
+          : "Confirm weekly submission",
       "Please check your figures carefully. After submission, this record is locked and changes cannot be made.",
       [
         { text: "Cancel", style: "cancel" },
         {
-          text: entryMode === "monthly" ? "Submit month" : "Submit week",
+          text: entryMode === "monthly" ? "Submit month" : entryMode === "daily" ? "Submit day" : "Submit week",
           style: "destructive",
           onPress: () => {
             void submitWeeklyEntry();
@@ -1320,8 +1358,13 @@ export default function App(): React.JSX.Element {
       return;
     }
 
-    const effectiveDate = entryMode === "monthly" ? entryDate : weekStartDate;
-    const effectiveWeekStartDate = entryMode === "monthly" ? getMonthStartFromDate(entryDate) : weekStartDate;
+    const effectiveDate = entryMode === "weekly" ? weekStartDate : entryDate;
+    const effectiveWeekStartDate =
+      entryMode === "monthly"
+        ? getMonthStartFromDate(entryDate)
+        : entryMode === "daily"
+          ? getWeekStartFromDate(entryDate)
+          : weekStartDate;
     const effectiveDateIso = parseDisplayDateToIso(effectiveDate);
     const effectiveWeekStartDateIso = parseDisplayDateToIso(effectiveWeekStartDate);
 
@@ -1330,7 +1373,9 @@ export default function App(): React.JSX.Element {
         "Validation",
         entryMode === "monthly"
           ? "Month date must be in DD-MM-YYYY format."
-          : "Week start date must be in DD-MM-YYYY format."
+          : entryMode === "daily"
+            ? "Daily date must be in DD-MM-YYYY format."
+            : "Week start date must be in DD-MM-YYYY format."
       );
       setStatus({ kind: "error", text: "Date format is invalid." });
       return;
@@ -1349,7 +1394,10 @@ export default function App(): React.JSX.Element {
     }
 
     setIsSavingWeek(true);
-    setStatus({ kind: "info", text: entryMode === "monthly" ? "Saving monthly entry..." : "Saving weekly entry..." });
+    setStatus({
+      kind: "info",
+      text: entryMode === "monthly" ? "Saving monthly entry..." : entryMode === "daily" ? "Saving daily entry..." : "Saving weekly entry..."
+    });
 
     try {
       const response = await authedFetch("/weekly-entry", {
@@ -1387,7 +1435,7 @@ export default function App(): React.JSX.Element {
         locked: true,
         locked_mode: entryMode,
         week_start_date: effectiveWeekStartDateIso,
-        existing_entry_dates: entryMode === "monthly" ? [effectiveDateIso] : [effectiveWeekStartDateIso]
+        existing_entry_dates: entryMode === "weekly" ? [effectiveWeekStartDateIso] : [effectiveDateIso]
       });
       setCurrentWeekId(payload.weekly_entry_id ?? null);
       if (payload.weekly_entry_id) {
@@ -1399,13 +1447,17 @@ export default function App(): React.JSX.Element {
         text:
           entryMode === "monthly"
             ? `Monthly entry saved into month starting ${effectiveWeekStartDate}.`
-            : "Weekly entry saved and locked with timestamp."
+            : entryMode === "daily"
+              ? `Daily entry saved into week starting ${effectiveWeekStartDate}.`
+              : "Weekly entry saved and locked with timestamp."
       });
       Alert.alert(
         "Saved",
         entryMode === "monthly"
           ? `Monthly entry recorded for ${effectiveDate}.`
-          : "Weekly entry locked and recorded."
+          : entryMode === "daily"
+            ? `Daily entry recorded for ${effectiveDate}.`
+            : "Weekly entry locked and recorded."
       );
     } catch (error) {
       Alert.alert("Network error", String(error));
@@ -2076,15 +2128,20 @@ export default function App(): React.JSX.Element {
               )}
 
               {screen === "week" && (
-                <FormSection title={entryMode === "monthly" ? "Monthly Entry" : "This Week"}>
+                <FormSection
+                  title={
+                    entryMode === "monthly" ? "Monthly Entry" : entryMode === "daily" ? "Daily Entry" : "This Week"
+                  }
+                >
                   <View style={styles.periodSegment}>
                     <Pressable
                       onPress={() => handleEntryModeChange("weekly")}
-                      disabled={modeLock?.locked_mode === "monthly"}
+                      disabled={modeLock?.locked_mode === "monthly" || modeLock?.locked_mode === "daily"}
                       style={[
                         styles.periodSegmentOption,
                         entryMode === "weekly" && styles.periodSegmentOptionActive,
-                        modeLock?.locked_mode === "monthly" && styles.periodSegmentOptionDisabled
+                        (modeLock?.locked_mode === "monthly" || modeLock?.locked_mode === "daily") &&
+                          styles.periodSegmentOptionDisabled
                       ]}
                     >
                       <Text
@@ -2098,11 +2155,12 @@ export default function App(): React.JSX.Element {
                     </Pressable>
                     <Pressable
                       onPress={() => handleEntryModeChange("monthly")}
-                      disabled={modeLock?.locked_mode === "weekly"}
+                      disabled={modeLock?.locked_mode === "weekly" || modeLock?.locked_mode === "daily"}
                       style={[
                         styles.periodSegmentOption,
                         entryMode === "monthly" && styles.periodSegmentOptionActive,
-                        modeLock?.locked_mode === "weekly" && styles.periodSegmentOptionDisabled
+                        (modeLock?.locked_mode === "weekly" || modeLock?.locked_mode === "daily") &&
+                          styles.periodSegmentOptionDisabled
                       ]}
                     >
                       <Text
@@ -2114,11 +2172,32 @@ export default function App(): React.JSX.Element {
                         Monthly
                       </Text>
                     </Pressable>
+                    <Pressable
+                      onPress={() => handleEntryModeChange("daily")}
+                      disabled={modeLock?.locked_mode === "weekly" || modeLock?.locked_mode === "monthly"}
+                      style={[
+                        styles.periodSegmentOption,
+                        entryMode === "daily" && styles.periodSegmentOptionActive,
+                        (modeLock?.locked_mode === "weekly" || modeLock?.locked_mode === "monthly") &&
+                          styles.periodSegmentOptionDisabled
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.periodSegmentText,
+                          entryMode === "daily" && styles.periodSegmentTextActive
+                        ]}
+                      >
+                        Daily
+                      </Text>
+                    </Pressable>
                   </View>
                   <Text style={styles.noteText}>
                     {entryMode === "monthly"
                       ? `Monthly entries roll into the month starting ${resolvedWeekStart}.`
-                      : "Weekly mode records the full week in one submission."}
+                      : entryMode === "daily"
+                        ? `Daily entries roll into the week starting ${resolvedWeekStart}.`
+                        : "Weekly mode records the full week in one submission."}
                   </Text>
                   {modeLock?.locked && modeLock.locked_mode && (
                     <Text style={[styles.noteText, { color: colors.accent, fontWeight: "700" }]}>
@@ -2126,12 +2205,21 @@ export default function App(): React.JSX.Element {
                     </Text>
                   )}
                   <View style={styles.quickActionsRow}>
-                    <SmallAction label={entryMode === "monthly" ? "Previous Month" : "Previous Week"} onPress={goToPreviousWeek} />
-                    <SmallAction label={entryMode === "monthly" ? "Next Month" : "Next Week"} onPress={goToNextWeek} disabled={!canGoToNextWeek} />
+                    <SmallAction
+                      label={entryMode === "monthly" ? "Previous Month" : entryMode === "daily" ? "Previous Day" : "Previous Week"}
+                      onPress={goToPreviousWeek}
+                    />
+                    <SmallAction
+                      label={entryMode === "monthly" ? "Next Month" : entryMode === "daily" ? "Next Day" : "Next Week"}
+                      onPress={goToNextWeek}
+                      disabled={!canGoToNextWeek}
+                    />
                   </View>
                   <View style={styles.quickActionsRow}>
                     {entryMode === "monthly" ? (
                       <SmallAction label="Use This Month" onPress={setThisMonth} />
+                    ) : entryMode === "daily" ? (
+                      <SmallAction label="Use Today" onPress={setToday} />
                     ) : (
                       <SmallAction label="Use This Monday" onPress={setThisMonday} />
                     )}
@@ -2148,6 +2236,17 @@ export default function App(): React.JSX.Element {
                       <Text style={styles.noteText}>Monthly bucket: {resolvedWeekStart}</Text>
                       <Text style={styles.noteText}>Use any date inside the month you want to review or submit.</Text>
                     </>
+                  ) : entryMode === "daily" ? (
+                    <>
+                      <Field
+                        label="Daily Date (DD-MM-YYYY)"
+                        value={entryDate}
+                        onChange={handleEntryDateChange}
+                        placeholder="22-04-2026"
+                      />
+                      <Text style={styles.noteText}>Week bucket: {resolvedWeekStart}</Text>
+                      <Text style={styles.noteText}>Use the exact day you want to record.</Text>
+                    </>
                   ) : (
                     <Field
                       label="Week Start Date (DD-MM-YYYY)"
@@ -2163,7 +2262,13 @@ export default function App(): React.JSX.Element {
                     placeholder="Agency, operator or platform"
                   />
                   <Field
-                    label={entryMode === "monthly" ? "Income for this month (£)" : "Income (£)"}
+                    label={
+                      entryMode === "monthly"
+                        ? "Income for this month (£)"
+                        : entryMode === "daily"
+                          ? "Income for this day (£)"
+                          : "Income (£)"
+                    }
                     value={income}
                     onChange={setIncome}
                     keyboardType="decimal-pad"
@@ -2203,7 +2308,10 @@ export default function App(): React.JSX.Element {
                   <View style={styles.previewRow}>
                     <PreviewPill label="Gross expenses" value={expensePreview.totalGross} />
                     <PreviewPill label="Claimable" value={expensePreview.totalClaimable} />
-                    <PreviewPill label={entryMode === "monthly" ? "Monthly profit" : "Weekly profit"} value={expensePreview.profit} />
+                    <PreviewPill
+                      label={entryMode === "monthly" ? "Monthly profit" : entryMode === "daily" ? "Daily profit" : "Weekly profit"}
+                      value={expensePreview.profit}
+                    />
                   </View>
 
                   <Text style={styles.noteText}>Use DD-MM-YYYY. Entries default to this month or this Monday, and future dates are blocked.</Text>
@@ -2218,7 +2326,9 @@ export default function App(): React.JSX.Element {
                     {isSavingWeek ? (
                       <ActivityIndicator color={colors.accentText} />
                     ) : (
-                      <Text style={styles.primaryButtonText}>{entryMode === "monthly" ? "Save Monthly Entry" : "Save Weekly Entry"}</Text>
+                      <Text style={styles.primaryButtonText}>
+                        {entryMode === "monthly" ? "Save Monthly Entry" : entryMode === "daily" ? "Save Daily Entry" : "Save Weekly Entry"}
+                      </Text>
                     )}
                   </Pressable>
 
@@ -2288,7 +2398,9 @@ export default function App(): React.JSX.Element {
                   <Text style={styles.noteText}>
                     {entryMode === "monthly"
                       ? "Monthly entries feed the same monthly and annual tax estimate view."
-                      : "Estimate only. Final liability depends on full-year position."}
+                      : entryMode === "daily"
+                        ? "Daily entries accumulate into weekly and annual tax estimate views."
+                        : "Estimate only. Final liability depends on full-year position."}
                   </Text>
                 </FormSection>
               )}
@@ -2624,7 +2736,7 @@ export default function App(): React.JSX.Element {
                 <FormSection title="User Guide & FAQ">
                   <Text style={styles.subSection}>Quick User Guide</Text>
                   <Text style={styles.guideItem}>1. Sign in or create your account.</Text>
-                  <Text style={styles.guideItem}>2. Choose weekly or monthly mode, then enter income and expenses.</Text>
+                  <Text style={styles.guideItem}>2. Choose daily, weekly, or monthly mode, then enter income and expenses.</Text>
                   <Text style={styles.guideItem}>3. Add any reimbursed expenses so the claimable total stays accurate.</Text>
                   <Text style={styles.guideItem}>4. Confirm the submission warning before saving your locked record.</Text>
                   <Text style={styles.guideItem}>5. Upload receipts after saving the weekly entry.</Text>

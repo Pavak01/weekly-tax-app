@@ -8,7 +8,7 @@ type SettingsScreenProps = {
   onClearWeek: (weekStartDate: string) => Promise<void>;
   onClearAll: () => Promise<void>;
   currentWeekStartDate: string;
-  entryMode: "weekly" | "monthly";
+  entryMode: "weekly" | "monthly" | "daily";
   isLoading?: boolean;
 };
 
