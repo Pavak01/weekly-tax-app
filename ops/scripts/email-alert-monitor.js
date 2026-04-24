@@ -132,7 +132,7 @@ async function main() {
   const railwayToken = getEnv("RAILWAY_TOKEN");
   let rows = [];
   if (!railwayToken) {
-    console.warn("monitor_warning RAILWAY_TOKEN is not set – skipping log fetch, treating as 0 events");
+    console.log("monitor_warning", JSON.stringify({ reason: "RAILWAY_TOKEN not set – skipping log fetch, treating as 0 events" }));
   } else {
     rows = runRailwayLogs(service, environment, lines);
   }
