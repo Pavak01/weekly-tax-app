@@ -129,8 +129,17 @@ async function main() {
   const startMs = now.getTime() - lookbackMinutes * 60 * 1000;
   const startIso = new Date(startMs).toISOString();
 
-  const rows = runRailwayLogs(service, environment, lines);
-  const { login401, download401 } = countSpike(rows, startMs);
+  const canary = getEnv("CANARY", "false") === "true";
+  let login401, download401;
+
+  if (canary) {
+    login401 = loginThreshold * 2;
+    download401 = downloadThreshold * 2;
+    console.log("canary_mode", JSON.stringify({ injected_login_401: login401, injected_download_401: download401 }));
+  } else {
+    const rows = runRailwayLogs(service, environment, lines);
+    ({ login401, download401 } = countSpike(rows, startMs));
+  }
 
   console.log(
     "monitor_window",
@@ -139,7 +148,8 @@ async function main() {
       window_start_utc: startIso,
       service,
       environment,
-      rows_fetched: rows.length,
+      canary,
+      rows_fetched: canary ? 0 : undefined,
       login_401: login401,
       download_401: download401,
       login_threshold: loginThreshold,
@@ -153,20 +163,20 @@ async function main() {
     return;
   }
 
-  const subject = `[weekly-tax-app] 401 spike detected (${environment})`;
+  const subject = `[weekly-tax-app] 401 spike detected (${environment})${canary ? " [CANARY]" : ""}`;
   const body = [
-    "401 spike alert detected.",
+    canary ? "CANARY TEST: Synthetic 401 counts injected to verify alert delivery." : "401 spike alert detected.",
     "",
     `Service: ${service}`,
     `Environment: ${environment}`,
-    `Window start (UTC): ${startIso}`,
-    `Window end (UTC): ${now.toISOString()}`,
+    canary ? "Source: canary injection (no real Railway logs fetched)" : `Window start (UTC): ${startIso}`,
+    canary ? "" : `Window end (UTC): ${now.toISOString()}`,
     `POST /auth/login 401 count: ${login401}`,
     `GET /receipts/:id/download 401 count: ${download401}`,
     `Thresholds: login>=${loginThreshold}, download>=${downloadThreshold}`,
     "",
     "Source: ops/scripts/email-alert-monitor.js"
-  ].join("\n");
+  ].filter((line) => line !== undefined).join("\n");
 
   await sendEmail({ subject, body });
   console.log("status", "alert_sent");

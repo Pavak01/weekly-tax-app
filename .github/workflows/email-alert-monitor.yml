@@ -4,6 +4,15 @@ on:
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
+    inputs:
+      canary:
+        description: "Canary test: inject synthetic 401 counts above threshold to verify the alert email path without real Railway logs"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
 
 jobs:
   monitor:
@@ -29,4 +38,5 @@ jobs:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           ALERT_FROM_EMAIL: ${{ secrets.ALERT_FROM_EMAIL }}
           ALERT_TO_EMAIL: ${{ secrets.ALERT_TO_EMAIL }}
+          CANARY: ${{ github.event.inputs.canary || 'false' }}
         run: node ops/scripts/email-alert-monitor.js
