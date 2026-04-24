@@ -137,6 +137,7 @@ async function main() {
     JSON.stringify({
       now_utc: now.toISOString(),
       window_start_utc: startIso,
+      max_event_age_seconds: lookbackMinutes * 60,
       service,
       environment,
       rows_fetched: rows.length,
