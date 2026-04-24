@@ -72,3 +72,4 @@ ALERT_SMOKE_DRY_RUN=false LOGIN_FAIL_COUNT=20 DOWNLOAD_FAIL_COUNT=6 ./ops/script
 
 - This is stateless and may send repeated alerts while spikes continue.
 - If you need de-duplication/cooldown, add a persistence layer (Redis, KV, or issue/comment state) in a follow-up iteration.
+- The workflow runs on a `schedule` trigger; it can also be triggered manually from the GitHub Actions tab at any time for ad-hoc checks.
