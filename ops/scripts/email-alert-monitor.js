@@ -129,7 +129,13 @@ async function main() {
   const startMs = now.getTime() - lookbackMinutes * 60 * 1000;
   const startIso = new Date(startMs).toISOString();
 
-  const rows = runRailwayLogs(service, environment, lines);
+  const railwayToken = getEnv("RAILWAY_TOKEN");
+  let rows = [];
+  if (!railwayToken) {
+    console.warn("monitor_warning RAILWAY_TOKEN is not set – skipping log fetch, treating as 0 events");
+  } else {
+    rows = runRailwayLogs(service, environment, lines);
+  }
   const { login401, download401 } = countSpike(rows, startMs);
 
   console.log(
