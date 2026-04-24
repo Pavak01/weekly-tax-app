@@ -17,6 +17,15 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Validate Railway token is present
+        run: |
+          if [ -z "${RAILWAY_TOKEN}" ]; then
+            echo "RAILWAY_TOKEN is not set. Add it in GitHub Actions secrets."
+            exit 1
+          fi
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+
       - name: Run 401 spike monitor
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
