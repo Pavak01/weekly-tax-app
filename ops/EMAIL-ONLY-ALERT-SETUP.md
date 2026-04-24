@@ -33,6 +33,7 @@ In `.github/workflows/email-alert-monitor.yml` env vars:
 - `LOG_LINES` (default `800`)
 - `LOGIN_401_THRESHOLD` (default `20`)
 - `DOWNLOAD_401_THRESHOLD` (default `6`)
+- `MAX_EVENT_AGE_SECONDS` (default `240`) to suppress stale spikes and reduce duplicate sends
 
 ## Local Dry Run
 
@@ -68,8 +69,15 @@ ALERT_SMOKE_DRY_RUN=false LOGIN_FAIL_COUNT=20 DOWNLOAD_FAIL_COUNT=6 ./ops/script
 
 4. Re-run workflow manually and confirm alert email receipt.
 
+## Risk Controls
+
+- Stale-event suppression: alerts are sent only when the newest matching 401 event is within `MAX_EVENT_AGE_SECONDS`.
+- Workflow overlap protection: GitHub Actions concurrency prevents parallel runs from double-sending.
+- Least privilege: workflow permissions are set to read-only repository content.
+- Timeout guardrail: workflow job timeout is limited to 10 minutes.
+
 ## Notes
 
-- This is stateless and may send repeated alerts while spikes continue.
-- If you need de-duplication/cooldown, add a persistence layer (Redis, KV, or issue/comment state) in a follow-up iteration.
+- This remains a lightweight monitor without persistent state.
+- During a sustained ongoing incident, repeat alerts can still occur as new events continue to arrive.
 - The workflow runs on a `schedule` trigger; it can also be triggered manually from the GitHub Actions tab at any time for ad-hoc checks.
