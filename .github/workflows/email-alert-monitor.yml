@@ -30,7 +30,7 @@ jobs:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_SERVICE: weekly-tax-app
           RAILWAY_ENVIRONMENT: production
-          LOOKBACK_MINUTES: "5"
+          LOOKBACK_MINUTES: "10"
           LOG_LINES: "800"
           LOGIN_401_THRESHOLD: "20"
           DOWNLOAD_401_THRESHOLD: "6"

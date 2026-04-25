@@ -29,7 +29,7 @@ Set these in GitHub repository settings -> Secrets and variables -> Actions:
 
 In `.github/workflows/email-alert-monitor.yml` env vars:
 
-- `LOOKBACK_MINUTES` (default `5`)
+- `LOOKBACK_MINUTES` (recommended `10` for Railway log-ingestion tolerance)
 - `LOG_LINES` (default `800`)
 - `LOGIN_401_THRESHOLD` (default `20`)
 - `DOWNLOAD_401_THRESHOLD` (default `6`)
