@@ -6,7 +6,7 @@ This setup adds lightweight alerting without a full monitoring platform.
 
 - Every 5 minutes, GitHub Actions runs `ops/scripts/email-alert-monitor.js`.
 - The script pulls Railway HTTP logs for `weekly-tax-app` in `production`.
-- It checks the last 5 minutes for:
+- It checks the last 10 minutes for:
   - `POST /auth/login` with `401` (threshold default: `>=20`)
   - `GET /receipts/:id/download` with `401` (threshold default: `>=6`)
 - If either threshold is breached, it sends an email through Resend.
@@ -75,6 +75,7 @@ ALERT_SMOKE_DRY_RUN=false LOGIN_FAIL_COUNT=20 DOWNLOAD_FAIL_COUNT=6 ./ops/script
 - Workflow overlap protection: GitHub Actions concurrency prevents parallel runs from double-sending.
 - Least privilege: workflow permissions are set to read-only repository content.
 - Timeout guardrail: workflow job timeout is limited to 10 minutes.
+- Secret preflight: workflow fails early with a clear error if any required secret is missing.
 
 ## Notes
 

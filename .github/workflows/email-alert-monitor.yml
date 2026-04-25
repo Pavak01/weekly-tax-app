@@ -25,6 +25,33 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Validate required secrets
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          ALERT_FROM_EMAIL: ${{ secrets.ALERT_FROM_EMAIL }}
+          ALERT_TO_EMAIL: ${{ secrets.ALERT_TO_EMAIL }}
+        run: |
+          missing=0
+          for name in RAILWAY_TOKEN RESEND_API_KEY ALERT_FROM_EMAIL ALERT_TO_EMAIL; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing required secret: ${name}"
+              missing=1
+            fi
+          done
+
+          if [ "$missing" -ne 0 ]; then
+            echo "secret_validation=failed"
+            exit 1
+          fi
+
+          # Emit non-sensitive diagnostics for quicker triage.
+          from_domain="${ALERT_FROM_EMAIL##*@}"
+          to_domain="${ALERT_TO_EMAIL##*@}"
+          echo "secret_validation=ok"
+          echo "alert_from_domain=${from_domain}"
+          echo "alert_to_domain=${to_domain}"
+
       - name: Run 401 spike monitor
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
