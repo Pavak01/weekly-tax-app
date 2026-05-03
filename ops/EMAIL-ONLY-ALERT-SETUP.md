@@ -6,7 +6,7 @@ This setup adds lightweight alerting without a full monitoring platform.
 
 - Every 5 minutes, GitHub Actions runs `ops/scripts/email-alert-monitor.js`.
 - The script pulls Railway HTTP logs for `weekly-tax-app` in `production`.
-- It checks the last 5 minutes for:
+- It checks the last 10 minutes for:
   - `POST /auth/login` with `401` (threshold default: `>=20`)
   - `GET /receipts/:id/download` with `401` (threshold default: `>=6`)
 - If either threshold is breached, it sends an email through Resend.
@@ -29,10 +29,11 @@ Set these in GitHub repository settings -> Secrets and variables -> Actions:
 
 In `.github/workflows/email-alert-monitor.yml` env vars:
 
-- `LOOKBACK_MINUTES` (default `5`)
+- `LOOKBACK_MINUTES` (recommended `10` for Railway log-ingestion tolerance)
 - `LOG_LINES` (default `800`)
 - `LOGIN_401_THRESHOLD` (default `20`)
 - `DOWNLOAD_401_THRESHOLD` (default `6`)
+- `MAX_EVENT_AGE_SECONDS` (default `240`) to suppress stale spikes and reduce duplicate sends
 
 ## Local Dry Run
 
@@ -68,7 +69,16 @@ ALERT_SMOKE_DRY_RUN=false LOGIN_FAIL_COUNT=20 DOWNLOAD_FAIL_COUNT=6 ./ops/script
 
 4. Re-run workflow manually and confirm alert email receipt.
 
+## Risk Controls
+
+- Stale-event suppression: alerts are sent only when the newest matching 401 event is within `MAX_EVENT_AGE_SECONDS`.
+- Workflow overlap protection: GitHub Actions concurrency prevents parallel runs from double-sending.
+- Least privilege: workflow permissions are set to read-only repository content.
+- Timeout guardrail: workflow job timeout is limited to 10 minutes.
+- Secret preflight: workflow fails early with a clear error if any required secret is missing.
+
 ## Notes
 
-- This is stateless and may send repeated alerts while spikes continue.
-- If you need de-duplication/cooldown, add a persistence layer (Redis, KV, or issue/comment state) in a follow-up iteration.
+- This remains a lightweight monitor without persistent state.
+- During a sustained ongoing incident, repeat alerts can still occur as new events continue to arrive.
+- The workflow runs on a `schedule` trigger; it can also be triggered manually from the GitHub Actions tab at any time for ad-hoc checks.
