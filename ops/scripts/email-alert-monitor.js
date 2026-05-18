@@ -51,6 +51,8 @@ function runRailwayLogs(service, environment, lines) {
 function countSpike(rows, startMs) {
   let login401 = 0;
   let download401 = 0;
+  let matchedEvents = 0;
+  let latestMatchedTs = 0;
 
   for (const row of rows) {
     if (!row || row.httpStatus !== 401 || !row.timestamp || !row.path) {
@@ -61,6 +63,9 @@ function countSpike(rows, startMs) {
     if (!Number.isFinite(ts) || ts < startMs) {
       continue;
     }
+
+    matchedEvents += 1;
+    latestMatchedTs = Math.max(latestMatchedTs, ts);
 
     if (row.method === "POST" && row.path === "/auth/login") {
       login401 += 1;
@@ -76,7 +81,7 @@ function countSpike(rows, startMs) {
     }
   }
 
-  return { login401, download401 };
+  return { login401, download401, matchedEvents, latestMatchedTs };
 }
 
 async function sendEmail(payload) {
@@ -124,13 +129,17 @@ async function main() {
   const lines = parseIntEnv("LOG_LINES", 800);
   const loginThreshold = parseIntEnv("LOGIN_401_THRESHOLD", 20);
   const downloadThreshold = parseIntEnv("DOWNLOAD_401_THRESHOLD", 6);
+  const maxEventAgeSeconds = parseIntEnv("MAX_EVENT_AGE_SECONDS", 240);
 
   const now = new Date();
   const startMs = now.getTime() - lookbackMinutes * 60 * 1000;
   const startIso = new Date(startMs).toISOString();
 
   const rows = runRailwayLogs(service, environment, lines);
-  const { login401, download401 } = countSpike(rows, startMs);
+  const { login401, download401, matchedEvents, latestMatchedTs } = countSpike(rows, startMs);
+  const latestMatchedIso = latestMatchedTs > 0 ? new Date(latestMatchedTs).toISOString() : null;
+  const latestEventAgeSeconds =
+    latestMatchedTs > 0 ? Math.floor((now.getTime() - latestMatchedTs) / 1000) : null;
 
   console.log(
     "monitor_window",
@@ -140,16 +149,25 @@ async function main() {
       service,
       environment,
       rows_fetched: rows.length,
+      matched_401_events: matchedEvents,
       login_401: login401,
       download_401: download401,
       login_threshold: loginThreshold,
-      download_threshold: downloadThreshold
+      download_threshold: downloadThreshold,
+      latest_matched_event_utc: latestMatchedIso,
+      latest_event_age_seconds: latestEventAgeSeconds,
+      max_event_age_seconds: maxEventAgeSeconds
     })
   );
 
   const breached = login401 >= loginThreshold || download401 >= downloadThreshold;
   if (!breached) {
     console.log("status", "no_alert");
+    return;
+  }
+
+  if (latestEventAgeSeconds === null || latestEventAgeSeconds > maxEventAgeSeconds) {
+    console.log("status", "suppressed_stale_event");
     return;
   }
 
@@ -161,6 +179,8 @@ async function main() {
     `Environment: ${environment}`,
     `Window start (UTC): ${startIso}`,
     `Window end (UTC): ${now.toISOString()}`,
+    `Latest matched 401 event (UTC): ${latestMatchedIso}`,
+    `Latest event age (seconds): ${latestEventAgeSeconds}`,
     `POST /auth/login 401 count: ${login401}`,
     `GET /receipts/:id/download 401 count: ${download401}`,
     `Thresholds: login>=${loginThreshold}, download>=${downloadThreshold}`,
