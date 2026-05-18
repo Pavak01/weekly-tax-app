@@ -329,3 +329,37 @@ Pending manual evidence capture to complete recommendation:
 - acknowledged_at_utc
 - acknowledged_by
 - resolved_at_utc
+
+## Monitor Update + Spike Verification (2026-05-18)
+
+Published monitor update:
+
+- Branch: `main`
+- Commit: `8f771ce`
+- Scope:
+	- Resend provider path retained (`RESEND_API_KEY`)
+	- stale-event suppression metadata and gate (`MAX_EVENT_AGE_SECONDS`) active in monitor logic
+	- setup documentation aligned to 10-minute lookback and risk controls
+
+Live spike command executed:
+
+```bash
+ALERT_SMOKE_DRY_RUN=false LOGIN_FAIL_COUNT=20 DOWNLOAD_FAIL_COUNT=6 ./ops/scripts/alerting-smoke-signals.sh
+```
+
+Observed result (UTC start `2026-05-18T06:03:17Z`):
+
+- total_status_lines: 26
+- status_401: 18
+- status_429: 8
+- status_500: 0
+
+Interpretation:
+
+- Download-failure burst still produced expected 401s (6/6).
+- Login-failure burst partially rate-limited during the run (12x401, 8x429), so login threshold crossing may not occur on that attempt.
+
+Operational blocker for immediate end-to-end proof in this shell:
+
+- Required monitor env vars are not present locally (`RAILWAY_TOKEN`, `RESEND_API_KEY`, `ALERT_FROM_EMAIL`, `ALERT_TO_EMAIL`), so local live monitor execution cannot be completed from this session.
+- Latest observed scheduled workflow runs still referenced prior commit `6bebb00` at time of check; a new run on `8f771ce` is required for post-publish validation.
