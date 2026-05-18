@@ -25,6 +25,14 @@ Set these in GitHub repository settings -> Secrets and variables -> Actions:
 - `ALERT_FROM_EMAIL` (must be from a verified Resend domain/sender)
 - `ALERT_TO_EMAIL`
 
+Sender format requirements:
+
+- `ALERT_FROM_EMAIL` must be exactly one of:
+  - `email@example.com`
+  - `Name <email@example.com>`
+- Do not wrap the value in quotes in GitHub Secrets.
+- Example valid value: `Weekly Tax Alerts <alerts@yourdomain.com>`
+
 ## Optional Tuning
 
 In `.github/workflows/email-alert-monitor.yml` env vars:

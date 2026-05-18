@@ -16,6 +16,51 @@ function parseIntEnv(name, fallback) {
   return parsed;
 }
 
+function normalizeEnvValue(raw) {
+  const trimmed = String(raw || "").trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  // Secrets are sometimes pasted with wrapping quotes; strip one pair.
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1).trim();
+  }
+
+  return trimmed;
+}
+
+function isSimpleEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function isNamedEmail(value) {
+  return /^[^<>]+<\s*[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+\s*>$/.test(value);
+}
+
+function validateEmailEnv(name, allowDisplayName = false) {
+  const normalized = normalizeEnvValue(getEnv(name));
+  if (!normalized) {
+    throw new Error(`Missing required email env var: ${name}`);
+  }
+
+  const valid = allowDisplayName
+    ? isSimpleEmail(normalized) || isNamedEmail(normalized)
+    : isSimpleEmail(normalized);
+
+  if (!valid) {
+    const allowed = allowDisplayName
+      ? "email@example.com or Name <email@example.com>"
+      : "email@example.com";
+    throw new Error(`Invalid ${name} format. Expected: ${allowed}`);
+  }
+
+  return normalized;
+}
+
 function runRailwayLogs(service, environment, lines) {
   const command = [
     "npx",
@@ -86,12 +131,12 @@ function countSpike(rows, startMs) {
 
 async function sendEmail(payload) {
   const resendApiKey = getEnv("RESEND_API_KEY");
-  const from = getEnv("ALERT_FROM_EMAIL");
-  const to = getEnv("ALERT_TO_EMAIL");
+  const from = validateEmailEnv("ALERT_FROM_EMAIL", true);
+  const to = validateEmailEnv("ALERT_TO_EMAIL", false);
   const dryRun = getEnv("DRY_RUN", "false") === "true";
 
-  if (!resendApiKey || !from || !to) {
-    throw new Error("Missing one or more required email env vars: RESEND_API_KEY, ALERT_FROM_EMAIL, ALERT_TO_EMAIL");
+  if (!resendApiKey) {
+    throw new Error("Missing required env var: RESEND_API_KEY");
   }
 
   if (dryRun) {
