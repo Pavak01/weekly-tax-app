@@ -1,5 +1,12 @@
 # Monthly Restore Drill Checklist
 
+## Quick Start
+
+- Auto-generate a drill record with the latest backup:
+  - ./ops/scripts/start-restore-drill.sh
+- Auto-generate a drill record with a specific backup folder:
+  - ./ops/scripts/start-restore-drill.sh ops/backups/20260520T102324Z
+
 ## Drill Metadata
 
 - Drill date (UTC):
