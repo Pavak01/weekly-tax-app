@@ -82,3 +82,20 @@ Protected routes (Bearer token required):
 - Receipt uploads restricted by MIME type and size; private signed receipt downloads
 - Rule-based monitoring output includes warnings and active rule version metadata
 - Admin tooling routes require authenticated admin role (`role = admin`)
+
+## Privacy
+
+- User-facing privacy policy draft: [PRIVACY-POLICY.md](PRIVACY-POLICY.md)
+- Account deletion request page draft: [ACCOUNT-DELETION.md](ACCOUNT-DELETION.md)
+- GitHub Pages-ready account deletion HTML: [ACCOUNT-DELETION.html](ACCOUNT-DELETION.html)
+- The policy reflects current collection, usage, storage, and deletion behavior implemented in the app and backend.
+
+## Operations
+
+- Production ops runbook (Railway backups, restore drill, and alerting): [ops/RAILWAY-PRODUCTION-RUNBOOK.md](ops/RAILWAY-PRODUCTION-RUNBOOK.md)
+- Drill evidence helper script: [ops/scripts/railway-drill-evidence.sh](ops/scripts/railway-drill-evidence.sh)
+- Alert smoke signal script: [ops/scripts/alerting-smoke-signals.sh](ops/scripts/alerting-smoke-signals.sh)
+- Alerting thresholds and escalation plan: [ops/ALERTING-IMPLEMENTATION-PLAN.md](ops/ALERTING-IMPLEMENTATION-PLAN.md)
+- Alert rollout execution checklist: [ops/ALERTING-ROLLOUT-CHECKLIST.md](ops/ALERTING-ROLLOUT-CHECKLIST.md)
+- Latest production baseline evidence: [ops/DRILL-EVIDENCE-2026-04-23.md](ops/DRILL-EVIDENCE-2026-04-23.md)
+- Alert test evidence: [ops/ALERTING-EVIDENCE-2026-04-23.md](ops/ALERTING-EVIDENCE-2026-04-23.md)

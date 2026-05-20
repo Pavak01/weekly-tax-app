@@ -1,0 +1,48 @@
+name: Publish Account Deletion Page
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "ACCOUNT-DELETION.html"
+      - "ACCOUNT-DELETION.md"
+      - ".github/workflows/github-pages-account-deletion.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Prepare site
+        run: |
+          mkdir -p site
+          cp ACCOUNT-DELETION.html site/ACCOUNT-DELETION.html
+          cp ACCOUNT-DELETION.html site/index.html
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
