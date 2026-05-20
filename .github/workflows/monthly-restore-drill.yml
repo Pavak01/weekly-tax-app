@@ -1,0 +1,45 @@
+name: Monthly Restore Drill
+
+permissions:
+  contents: read
+
+on:
+  schedule:
+    - cron: "0 9 1 * *"
+  workflow_dispatch:
+
+jobs:
+  restore-drill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+
+      - name: Run automated restore drill
+        env:
+          DRILL_OUTPUT_PATH: ${{ runner.temp }}/restore-drill-report.md
+        run: |
+          chmod +x ./ops/scripts/automated-restore-drill.sh
+          ./ops/scripts/automated-restore-drill.sh
+
+      - name: Upload drill report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: restore-drill-report-${{ github.run_id }}
+          path: ${{ runner.temp }}/restore-drill-report.md
+
+      - name: Publish drill summary
+        if: always()
+        run: |
+          if [ -f "${{ runner.temp }}/restore-drill-report.md" ]; then
+            cat "${{ runner.temp }}/restore-drill-report.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
