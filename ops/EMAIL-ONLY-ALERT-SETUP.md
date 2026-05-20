@@ -10,6 +10,9 @@ This setup adds lightweight alerting without a full monitoring platform.
   - `POST /auth/login` with `401` (threshold default: `>=20`)
   - `GET /receipts/:id/download` with `401` (threshold default: `>=6`)
 - If either threshold is breached, it sends an email through Resend.
+- It tracks delivery SLO counters (`sent`, `delivered`, `bounced`, `pending`) in monitor logs.
+- It applies cooldown suppression to avoid repeated alerts during long incidents.
+- It can send escalation alerts to a secondary destination after repeated breaches.
 
 ## Files Added
 
@@ -24,6 +27,7 @@ Set these in GitHub repository settings -> Secrets and variables -> Actions:
 - `RESEND_API_KEY`
 - `ALERT_FROM_EMAIL` (must be from a verified Resend domain/sender)
 - `ALERT_TO_EMAIL`
+- `ALERT_ESCALATION_TO_EMAIL` (optional secondary destination)
 
 Sender format requirements:
 
@@ -41,7 +45,12 @@ In `.github/workflows/email-alert-monitor.yml` env vars:
 - `LOG_LINES` (default `800`)
 - `LOGIN_401_THRESHOLD` (default `20`)
 - `DOWNLOAD_401_THRESHOLD` (default `6`)
-- `MAX_EVENT_AGE_SECONDS` (default `240`) to suppress stale spikes and reduce duplicate sends
+- `MAX_EVENT_AGE_SECONDS` (default `240`) to suppress stale spikes
+- `ALERT_COOLDOWN_SECONDS` (default `1800`) to suppress repeated sends during ongoing incidents
+- `ALERT_BREACH_RESET_SECONDS` (default `3600`) window used for repeated-breach counting
+- `ESCALATION_CONSECUTIVE_BREACHES` (default `3`) breach count before escalation alert is sent
+- `ESCALATION_COOLDOWN_SECONDS` (default `3600`) minimum interval between escalation alerts
+- `SLO_LOOKBACK_HOURS` (default `24`) for delivery SLO summary windows
 
 ## Local Dry Run
 
@@ -80,11 +89,14 @@ ALERT_SMOKE_DRY_RUN=false LOGIN_FAIL_COUNT=20 DOWNLOAD_FAIL_COUNT=6 ./ops/script
 ## Risk Controls
 
 - Stale-event suppression: alerts are sent only when the newest matching 401 event is within `MAX_EVENT_AGE_SECONDS`.
+- Cooldown suppression: repeated alerts are suppressed for `ALERT_COOLDOWN_SECONDS` after a send.
+- Persistent state cache: monitor state is restored/saved across workflow runs via GitHub Actions cache.
 - Workflow overlap protection: GitHub Actions concurrency prevents parallel runs from double-sending.
 - Least privilege: workflow permissions are set to read-only repository content.
 - Timeout guardrail: workflow job timeout is limited to 10 minutes.
 - Secret preflight: workflow fails early with a clear error if any required secret is missing.
 - Provider swap: workflow now uses Resend (`RESEND_API_KEY`).
+- Escalation policy: optional secondary alert destination can be triggered for repeated breaches.
 
 ## Notes
 

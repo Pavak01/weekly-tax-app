@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 const { execSync } = require("node:child_process");
+const fs = require("node:fs");
+const path = require("node:path");
 
 function getEnv(name, fallback = "") {
   const value = process.env[name];
@@ -14,6 +16,11 @@ function parseIntEnv(name, fallback) {
     throw new Error(`Invalid integer for ${name}: ${raw}`);
   }
   return parsed;
+}
+
+function parseBoolEnv(name, fallback = false) {
+  const value = getEnv(name, fallback ? "true" : "false").toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
 }
 
 function normalizeEnvValue(raw) {
@@ -93,6 +100,169 @@ function runRailwayLogs(service, environment, lines) {
     .map((line) => JSON.parse(line));
 }
 
+function safeJsonParse(text, fallback) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return fallback;
+  }
+}
+
+function ensureDirForFile(filePath) {
+  const dir = path.dirname(filePath);
+  fs.mkdirSync(dir, { recursive: true });
+}
+
+function defaultState() {
+  return {
+    lastAlertSentAt: null,
+    lastEscalationSentAt: null,
+    lastBreachAt: null,
+    consecutiveBreaches: 0,
+    stats: {
+      sent: 0,
+      noAlert: 0,
+      suppressedStale: 0,
+      suppressedCooldown: 0,
+      escalationsSent: 0,
+      errors: 0
+    },
+    sentMessages: []
+  };
+}
+
+function loadState(stateFile) {
+  if (!fs.existsSync(stateFile)) {
+    return defaultState();
+  }
+
+  const raw = fs.readFileSync(stateFile, "utf8");
+  const parsed = safeJsonParse(raw, null);
+  if (!parsed || typeof parsed !== "object") {
+    return defaultState();
+  }
+
+  return {
+    ...defaultState(),
+    ...parsed,
+    stats: {
+      ...defaultState().stats,
+      ...(parsed.stats || {})
+    },
+    sentMessages: Array.isArray(parsed.sentMessages) ? parsed.sentMessages : []
+  };
+}
+
+function saveState(stateFile, state) {
+  ensureDirForFile(stateFile);
+  fs.writeFileSync(stateFile, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+}
+
+function trimMessageHistory(state, maxItems = 100) {
+  if (state.sentMessages.length > maxItems) {
+    state.sentMessages = state.sentMessages.slice(-maxItems);
+  }
+}
+
+function recordSentMessage(state, entry) {
+  state.sentMessages.push(entry);
+  trimMessageHistory(state);
+}
+
+async function resendApiRequest(resendApiKey, url, init = {}) {
+  const response = await fetch(url, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${resendApiKey}`,
+      "Content-Type": "application/json",
+      ...(init.headers || {})
+    }
+  });
+
+  const bodyText = await response.text();
+  const bodyJson = safeJsonParse(bodyText, null);
+
+  if (!response.ok) {
+    const body = bodyJson ? JSON.stringify(bodyJson) : bodyText;
+    throw new Error(`Resend API error (${response.status}): ${body}`);
+  }
+
+  return bodyJson || {};
+}
+
+async function refreshDeliveryState(resendApiKey, state) {
+  const unknownStatuses = new Set(["sent", "queued", "unknown", "processing"]);
+
+  for (const message of state.sentMessages) {
+    if (!message || !message.id || !unknownStatuses.has(message.status || "unknown")) {
+      continue;
+    }
+
+    try {
+      const details = await resendApiRequest(
+        resendApiKey,
+        `https://api.resend.com/emails/${message.id}`,
+        { method: "GET" }
+      );
+
+      // Resend response shape may evolve; probe common keys defensively.
+      const status =
+        details.last_event ||
+        details.status ||
+        details.email?.last_event ||
+        details.data?.last_event ||
+        details.data?.status ||
+        "unknown";
+      message.status = String(status).toLowerCase();
+      message.lastCheckedAt = new Date().toISOString();
+    } catch {
+      // Do not fail monitor execution if delivery lookup is temporarily unavailable.
+      message.lastCheckedAt = new Date().toISOString();
+    }
+  }
+}
+
+function summarizeDeliverySlo(state, lookbackHours) {
+  const sinceMs = Date.now() - lookbackHours * 60 * 60 * 1000;
+  const recent = state.sentMessages.filter((message) => {
+    const ts = Date.parse(message.createdAt || "");
+    return Number.isFinite(ts) && ts >= sinceMs;
+  });
+
+  const counters = {
+    sent: recent.length,
+    delivered: 0,
+    bounced: 0,
+    complained: 0,
+    pending: 0,
+    unknown: 0
+  };
+
+  for (const message of recent) {
+    const status = (message.status || "unknown").toLowerCase();
+    if (status === "delivered") {
+      counters.delivered += 1;
+    } else if (status.includes("bounce")) {
+      counters.bounced += 1;
+    } else if (status.includes("complain")) {
+      counters.complained += 1;
+    } else if (status === "sent" || status === "queued" || status === "processing") {
+      counters.pending += 1;
+    } else {
+      counters.unknown += 1;
+    }
+  }
+
+  const resolved = counters.delivered + counters.bounced + counters.complained;
+  const deliveryRate = resolved > 0 ? counters.delivered / resolved : null;
+
+  return {
+    lookback_hours: lookbackHours,
+    ...counters,
+    delivery_rate: deliveryRate
+  };
+}
+
 function countSpike(rows, startMs) {
   let login401 = 0;
   let download401 = 0;
@@ -132,7 +302,7 @@ function countSpike(rows, startMs) {
 async function sendEmail(payload) {
   const resendApiKey = getEnv("RESEND_API_KEY");
   const from = validateEmailEnv("ALERT_FROM_EMAIL", true);
-  const to = validateEmailEnv("ALERT_TO_EMAIL", false);
+  const to = validateEmailEnv(payload.toEnv || "ALERT_TO_EMAIL", false);
   const dryRun = getEnv("DRY_RUN", "false") === "true";
 
   if (!resendApiKey) {
@@ -141,15 +311,11 @@ async function sendEmail(payload) {
 
   if (dryRun) {
     console.log("dry_run_email_payload", JSON.stringify(payload));
-    return;
+    return { id: "dry-run" };
   }
 
-  const response = await fetch("https://api.resend.com/emails", {
+  const result = await resendApiRequest(resendApiKey, "https://api.resend.com/emails", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${resendApiKey}`,
-      "Content-Type": "application/json"
-    },
     body: JSON.stringify({
       from,
       to: [to],
@@ -158,13 +324,12 @@ async function sendEmail(payload) {
     })
   });
 
-  const body = await response.text();
-
-  if (!response.ok) {
-    throw new Error(`Resend API error (${response.status}): ${body}`);
-  }
-
-  console.log("email_sent", body);
+  console.log("email_sent", JSON.stringify(result));
+  return {
+    id: result.id || null,
+    to,
+    subject: payload.subject
+  };
 }
 
 async function main() {
@@ -175,8 +340,19 @@ async function main() {
   const loginThreshold = parseIntEnv("LOGIN_401_THRESHOLD", 20);
   const downloadThreshold = parseIntEnv("DOWNLOAD_401_THRESHOLD", 6);
   const maxEventAgeSeconds = parseIntEnv("MAX_EVENT_AGE_SECONDS", 240);
+  const cooldownSeconds = parseIntEnv("ALERT_COOLDOWN_SECONDS", 1800);
+  const breachResetSeconds = parseIntEnv("ALERT_BREACH_RESET_SECONDS", 3600);
+  const escalationThreshold = parseIntEnv("ESCALATION_CONSECUTIVE_BREACHES", 3);
+  const escalationCooldownSeconds = parseIntEnv("ESCALATION_COOLDOWN_SECONDS", 3600);
+  const stateFile = getEnv("ALERT_STATE_FILE", ".alert-state/monitor-state.json");
+  const sloLookbackHours = parseIntEnv("SLO_LOOKBACK_HOURS", 24);
+  const escalationEnabled = parseBoolEnv("ENABLE_ESCALATION", true);
+
+  const state = loadState(stateFile);
+  const resendApiKey = getEnv("RESEND_API_KEY");
 
   const now = new Date();
+  const nowMs = now.getTime();
   const startMs = now.getTime() - lookbackMinutes * 60 * 1000;
   const startIso = new Date(startMs).toISOString();
 
@@ -201,18 +377,59 @@ async function main() {
       download_threshold: downloadThreshold,
       latest_matched_event_utc: latestMatchedIso,
       latest_event_age_seconds: latestEventAgeSeconds,
-      max_event_age_seconds: maxEventAgeSeconds
+      max_event_age_seconds: maxEventAgeSeconds,
+      cooldown_seconds: cooldownSeconds,
+      consecutive_breaches: state.consecutiveBreaches,
+      state_file: stateFile
     })
   );
 
   const breached = login401 >= loginThreshold || download401 >= downloadThreshold;
   if (!breached) {
+    state.stats.noAlert += 1;
+    if (state.lastBreachAt) {
+      const lastBreachMs = Date.parse(state.lastBreachAt);
+      if (Number.isFinite(lastBreachMs) && nowMs - lastBreachMs > breachResetSeconds * 1000) {
+        state.consecutiveBreaches = 0;
+      }
+    }
+    if (resendApiKey) {
+      await refreshDeliveryState(resendApiKey, state);
+      console.log("delivery_slo", JSON.stringify(summarizeDeliverySlo(state, sloLookbackHours)));
+    }
+    saveState(stateFile, state);
     console.log("status", "no_alert");
     return;
   }
 
+  const lastBreachMs = Date.parse(state.lastBreachAt || "");
+  if (Number.isFinite(lastBreachMs) && nowMs - lastBreachMs <= breachResetSeconds * 1000) {
+    state.consecutiveBreaches += 1;
+  } else {
+    state.consecutiveBreaches = 1;
+  }
+  state.lastBreachAt = now.toISOString();
+
   if (latestEventAgeSeconds === null || latestEventAgeSeconds > maxEventAgeSeconds) {
+    state.stats.suppressedStale += 1;
+    if (resendApiKey) {
+      await refreshDeliveryState(resendApiKey, state);
+      console.log("delivery_slo", JSON.stringify(summarizeDeliverySlo(state, sloLookbackHours)));
+    }
+    saveState(stateFile, state);
     console.log("status", "suppressed_stale_event");
+    return;
+  }
+
+  const lastAlertMs = Date.parse(state.lastAlertSentAt || "");
+  if (Number.isFinite(lastAlertMs) && nowMs - lastAlertMs < cooldownSeconds * 1000) {
+    state.stats.suppressedCooldown += 1;
+    if (resendApiKey) {
+      await refreshDeliveryState(resendApiKey, state);
+      console.log("delivery_slo", JSON.stringify(summarizeDeliverySlo(state, sloLookbackHours)));
+    }
+    saveState(stateFile, state);
+    console.log("status", "suppressed_cooldown");
     return;
   }
 
@@ -233,11 +450,77 @@ async function main() {
     "Source: ops/scripts/email-alert-monitor.js"
   ].join("\n");
 
-  await sendEmail({ subject, body });
+  const primaryResult = await sendEmail({ subject, body, toEnv: "ALERT_TO_EMAIL" });
+  state.lastAlertSentAt = now.toISOString();
+  state.stats.sent += 1;
+  recordSentMessage(state, {
+    id: primaryResult.id,
+    to: primaryResult.to,
+    subject: primaryResult.subject,
+    status: "sent",
+    createdAt: now.toISOString(),
+    type: "primary"
+  });
+
+  if (escalationEnabled && getEnv("ALERT_ESCALATION_TO_EMAIL")) {
+    const lastEscalationMs = Date.parse(state.lastEscalationSentAt || "");
+    const escalationCooldownElapsed =
+      !Number.isFinite(lastEscalationMs) || nowMs - lastEscalationMs >= escalationCooldownSeconds * 1000;
+
+    if (state.consecutiveBreaches >= escalationThreshold && escalationCooldownElapsed) {
+      const escalationSubject = `[weekly-tax-app][ESCALATION] repeated 401 spikes (${environment})`;
+      const escalationBody = [
+        "Escalation: repeated 401 spike condition persisted.",
+        "",
+        `Consecutive breach windows: ${state.consecutiveBreaches}`,
+        `Escalation threshold: ${escalationThreshold}`,
+        `Service: ${service}`,
+        `Environment: ${environment}`,
+        `Latest matched 401 event (UTC): ${latestMatchedIso}`,
+        `Latest event age (seconds): ${latestEventAgeSeconds}`,
+        `Primary alert sent at (UTC): ${now.toISOString()}`,
+        "",
+        "Source: ops/scripts/email-alert-monitor.js"
+      ].join("\n");
+
+      const escalationResult = await sendEmail({
+        subject: escalationSubject,
+        body: escalationBody,
+        toEnv: "ALERT_ESCALATION_TO_EMAIL"
+      });
+
+      state.lastEscalationSentAt = now.toISOString();
+      state.stats.escalationsSent += 1;
+      recordSentMessage(state, {
+        id: escalationResult.id,
+        to: escalationResult.to,
+        subject: escalationResult.subject,
+        status: "sent",
+        createdAt: now.toISOString(),
+        type: "escalation"
+      });
+      console.log("escalation", "sent");
+    }
+  }
+
+  if (resendApiKey) {
+    await refreshDeliveryState(resendApiKey, state);
+    console.log("delivery_slo", JSON.stringify(summarizeDeliverySlo(state, sloLookbackHours)));
+  }
+
+  saveState(stateFile, state);
   console.log("status", "alert_sent");
 }
 
 main().catch((error) => {
+  try {
+    const stateFile = getEnv("ALERT_STATE_FILE", ".alert-state/monitor-state.json");
+    const state = loadState(stateFile);
+    state.stats.errors += 1;
+    saveState(stateFile, state);
+  } catch {
+    // Ignore state write failures while handling fatal errors.
+  }
   console.error("monitor_error", error.message);
   process.exit(1);
 });

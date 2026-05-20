@@ -25,12 +25,24 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Restore monitor state
+        uses: actions/cache/restore@v4
+        with:
+          path: .alert-state
+          key: email-alert-monitor-state-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            email-alert-monitor-state-${{ github.ref_name }}-
+
+      - name: Ensure state directory
+        run: mkdir -p .alert-state
+
       - name: Validate required secrets
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           ALERT_FROM_EMAIL: ${{ secrets.ALERT_FROM_EMAIL }}
           ALERT_TO_EMAIL: ${{ secrets.ALERT_TO_EMAIL }}
+          ALERT_ESCALATION_TO_EMAIL: ${{ secrets.ALERT_ESCALATION_TO_EMAIL }}
         run: |
           missing=0
           for name in RAILWAY_TOKEN RESEND_API_KEY ALERT_FROM_EMAIL ALERT_TO_EMAIL; do
@@ -51,6 +63,10 @@ jobs:
           echo "secret_validation=ok"
           echo "alert_from_domain=${from_domain}"
           echo "alert_to_domain=${to_domain}"
+          if [ -n "${ALERT_ESCALATION_TO_EMAIL}" ]; then
+            escalation_to_domain="${ALERT_ESCALATION_TO_EMAIL##*@}"
+            echo "alert_escalation_to_domain=${escalation_to_domain}"
+          fi
 
       - name: Run 401 spike monitor
         env:
@@ -62,7 +78,47 @@ jobs:
           LOGIN_401_THRESHOLD: "20"
           DOWNLOAD_401_THRESHOLD: "6"
           MAX_EVENT_AGE_SECONDS: "240"
+          ALERT_COOLDOWN_SECONDS: "1800"
+          ALERT_BREACH_RESET_SECONDS: "3600"
+          ENABLE_ESCALATION: "true"
+          ESCALATION_CONSECUTIVE_BREACHES: "3"
+          ESCALATION_COOLDOWN_SECONDS: "3600"
+          SLO_LOOKBACK_HOURS: "24"
+          ALERT_STATE_FILE: .alert-state/monitor-state.json
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           ALERT_FROM_EMAIL: ${{ secrets.ALERT_FROM_EMAIL }}
           ALERT_TO_EMAIL: ${{ secrets.ALERT_TO_EMAIL }}
+          ALERT_ESCALATION_TO_EMAIL: ${{ secrets.ALERT_ESCALATION_TO_EMAIL }}
         run: node ops/scripts/email-alert-monitor.js
+
+      - name: Publish monitor summary
+        if: always()
+        run: |
+          if [ -f .alert-state/monitor-state.json ]; then
+            echo "## Alert Monitor State" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            node -e '
+            const fs=require("node:fs");
+            const p=".alert-state/monitor-state.json";
+            const s=JSON.parse(fs.readFileSync(p,"utf8"));
+            const stats=s.stats||{};
+            const line=(k,v)=>`- ${k}: ${v ?? 0}`;
+            const out=[
+              line("sent",stats.sent),
+              line("no_alert",stats.noAlert),
+              line("suppressed_stale",stats.suppressedStale),
+              line("suppressed_cooldown",stats.suppressedCooldown),
+              line("escalations_sent",stats.escalationsSent),
+              line("errors",stats.errors),
+              line("consecutive_breaches",s.consecutiveBreaches||0),
+            ].join("\\n");
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,out+"\\n");
+            '
+          fi
+
+      - name: Save monitor state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .alert-state
+          key: email-alert-monitor-state-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
