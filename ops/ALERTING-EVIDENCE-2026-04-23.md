@@ -363,3 +363,39 @@ Operational blocker for immediate end-to-end proof in this shell:
 
 - Required monitor env vars are not present locally (`RAILWAY_TOKEN`, `RESEND_API_KEY`, `ALERT_FROM_EMAIL`, `ALERT_TO_EMAIL`), so local live monitor execution cannot be completed from this session.
 - Latest observed scheduled workflow runs still referenced prior commit `6bebb00` at time of check; a new run on `8f771ce` is required for post-publish validation.
+
+## Final Delivery Verification (2026-05-20)
+
+Outcome:
+
+- End-to-end email alert delivery verified.
+
+Verification sequence:
+
+- Domain verification in Resend completed for sender domain.
+- Fresh spike generated immediately before workflow execution:
+	- started_at_utc: 2026-05-20T10:14:59Z
+	- status_401: 9
+- GitHub Actions run manually re-executed:
+	- workflow run: `#891`
+	- run_attempt: `2`
+	- run URL: `https://github.com/Pavak01/weekly-tax-app/actions/runs/26106332080`
+	- job URL: `https://github.com/Pavak01/weekly-tax-app/actions/runs/26106332080/job/76935983667`
+
+Monitor step output (success path):
+
+- `matched_401_events`: 9
+- `download_401`: 8
+- `latest_event_age_seconds`: 88
+- `max_event_age_seconds`: 600 (temporary test override)
+- `email_sent {"id":"1a7c8132-91b4-47ba-86a9-40ac997c8dac"}`
+- `status alert_sent`
+
+Destination confirmation:
+
+- Recipient inbox confirmation: received by operator.
+- Provider message id: `1a7c8132-91b4-47ba-86a9-40ac997c8dac`
+
+Post-verification cleanup:
+
+- Workflow freshness override reset from `600` to `240` for normal operations.
