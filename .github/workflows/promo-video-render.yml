@@ -2,6 +2,14 @@ name: Render Promo Video
 
 on:
   workflow_dispatch:
+  push:
+    branches: ["main"]
+    paths:
+      - "ops/promo/assets/**"
+      - "ops/promo/promo-subtitles.srt"
+      - "ops/promo/render-promo-video.sh"
+      - "ops/promo/generate-placeholder-assets.sh"
+      - ".github/workflows/promo-video-render.yml"
 
 permissions:
   contents: read
