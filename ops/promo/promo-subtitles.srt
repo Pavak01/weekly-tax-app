@@ -1,0 +1,27 @@
+1
+00:00:00,000 --> 00:00:04,000
+Still tracking income in notes and spreadsheets?
+
+2
+00:00:04,000 --> 00:00:09,000
+Sign in once and start each week with a clean snapshot.
+
+3
+00:00:09,000 --> 00:00:14,000
+Log income and expenses fast, with totals calculated instantly.
+
+4
+00:00:14,000 --> 00:00:19,000
+Stop guessing tax time: every entry is stored in one place.
+
+5
+00:00:19,000 --> 00:00:24,000
+Audit view shows year-to-date totals when you need proof.
+
+6
+00:00:24,000 --> 00:00:28,000
+Built-in safeguards prevent accidental data loss.
+
+7
+00:00:28,000 --> 00:00:30,000
+Qbit: fewer surprises, calmer tax weeks.
