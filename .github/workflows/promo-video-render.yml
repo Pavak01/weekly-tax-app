@@ -1,0 +1,59 @@
+name: Render Promo Video
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  render-promo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          ffmpeg -version
+
+      - name: Verify promo assets exist
+        run: |
+          set -euo pipefail
+          assets=(
+            "ops/promo/assets/01-title.png"
+            "ops/promo/assets/02-income.png"
+            "ops/promo/assets/03-expenses.png"
+            "ops/promo/assets/04-receipts.png"
+            "ops/promo/assets/05-summary.png"
+            "ops/promo/assets/06-export.png"
+            "ops/promo/assets/07-endcard.png"
+          )
+
+          missing=0
+          for f in "${assets[@]}"; do
+            if [ ! -f "$f" ]; then
+              echo "Missing required asset: $f"
+              missing=1
+            fi
+          done
+
+          if [ "$missing" -ne 0 ]; then
+            echo "Add the missing files and rerun this workflow."
+            exit 1
+          fi
+
+      - name: Render promo video
+        run: |
+          chmod +x ops/promo/render-promo-video.sh
+          ./ops/promo/render-promo-video.sh
+
+      - name: Upload promo artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-tax-app-promo-30s
+          path: ops/promo/out/weekly-tax-app-promo-30s.mp4
+          if-no-files-found: error
