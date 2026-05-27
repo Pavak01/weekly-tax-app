@@ -9,6 +9,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 ASSETS_DIR="$ROOT_DIR/ops/promo/assets"
 OUT_DIR="$ROOT_DIR/ops/promo/out"
+BASE_VIDEO="$OUT_DIR/weekly-tax-app-promo-30s-base.mp4"
 OUT_VIDEO="$OUT_DIR/weekly-tax-app-promo-30s.mp4"
 SRT_FILE="$ROOT_DIR/ops/promo/promo-subtitles.srt"
 
@@ -33,69 +34,73 @@ if ! command -v ffmpeg >/dev/null 2>&1; then
   exit 1
 fi
 
-# Segment durations: 4,5,5,5,5,4,2 = 30 seconds total
+# Build a more dynamic cut with subtle camera motion and crossfades.
+render_base_video() {
+  ffmpeg \
+    -y \
+    -loop 1 -t 4.5 -i "$ASSETS_DIR/01-title.png" \
+    -loop 1 -t 5.5 -i "$ASSETS_DIR/02-income.png" \
+    -loop 1 -t 5.5 -i "$ASSETS_DIR/03-expenses.png" \
+    -loop 1 -t 5.5 -i "$ASSETS_DIR/04-receipts.png" \
+    -loop 1 -t 5.5 -i "$ASSETS_DIR/05-summary.png" \
+    -loop 1 -t 4.5 -i "$ASSETS_DIR/06-export.png" \
+    -loop 1 -t 2.6 -i "$ASSETS_DIR/07-endcard.png" \
+    -filter_complex "
+      [0:v]scale=1188:2112,crop=1080:1920:x='(in_w-out_w)/2+16*sin(0.45*t)':y='(in_h-out_h)/2+10*cos(0.31*t)',trim=duration=4.5,setpts=PTS-STARTPTS,fps=30,format=yuv420p[v0];
+      [1:v]scale=1188:2112,crop=1080:1920:x='(in_w-out_w)/2+16*sin(0.45*t)':y='(in_h-out_h)/2+10*cos(0.31*t)',trim=duration=5.5,setpts=PTS-STARTPTS,fps=30,format=yuv420p[v1];
+      [2:v]scale=1188:2112,crop=1080:1920:x='(in_w-out_w)/2+16*sin(0.45*t)':y='(in_h-out_h)/2+10*cos(0.31*t)',trim=duration=5.5,setpts=PTS-STARTPTS,fps=30,format=yuv420p[v2];
+      [3:v]scale=1188:2112,crop=1080:1920:x='(in_w-out_w)/2+16*sin(0.45*t)':y='(in_h-out_h)/2+10*cos(0.31*t)',trim=duration=5.5,setpts=PTS-STARTPTS,fps=30,format=yuv420p[v3];
+      [4:v]scale=1188:2112,crop=1080:1920:x='(in_w-out_w)/2+16*sin(0.45*t)':y='(in_h-out_h)/2+10*cos(0.31*t)',trim=duration=5.5,setpts=PTS-STARTPTS,fps=30,format=yuv420p[v4];
+      [5:v]scale=1188:2112,crop=1080:1920:x='(in_w-out_w)/2+16*sin(0.45*t)':y='(in_h-out_h)/2+10*cos(0.31*t)',trim=duration=4.5,setpts=PTS-STARTPTS,fps=30,format=yuv420p[v5];
+      [6:v]scale=1188:2112,crop=1080:1920:x='(in_w-out_w)/2+16*sin(0.45*t)':y='(in_h-out_h)/2+10*cos(0.31*t)',trim=duration=2.6,setpts=PTS-STARTPTS,fps=30,format=yuv420p[v6];
+      [v0][v1]xfade=transition=fade:duration=0.6:offset=3.9[x1];
+      [x1][v2]xfade=transition=fade:duration=0.6:offset=8.8[x2];
+      [x2][v3]xfade=transition=fade:duration=0.6:offset=13.7[x3];
+      [x3][v4]xfade=transition=fade:duration=0.6:offset=18.6[x4];
+      [x4][v5]xfade=transition=fade:duration=0.6:offset=23.5[x5];
+      [x5][v6]xfade=transition=fade:duration=0.6:offset=27.4[vout]
+    " \
+    -map "[vout]" \
+    -r 30 \
+    -c:v libx264 \
+    -preset medium \
+    -crf 20 \
+    -movflags +faststart \
+    "$BASE_VIDEO"
+}
+
 render_with_subtitles() {
-ffmpeg \
-  -y \
-  -loop 1 -t 4 -i "$ASSETS_DIR/01-title.png" \
-  -loop 1 -t 5 -i "$ASSETS_DIR/02-income.png" \
-  -loop 1 -t 5 -i "$ASSETS_DIR/03-expenses.png" \
-  -loop 1 -t 5 -i "$ASSETS_DIR/04-receipts.png" \
-  -loop 1 -t 5 -i "$ASSETS_DIR/05-summary.png" \
-  -loop 1 -t 4 -i "$ASSETS_DIR/06-export.png" \
-  -loop 1 -t 2 -i "$ASSETS_DIR/07-endcard.png" \
-  -filter_complex "
-    [0:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,format=yuv420p[v0];
-    [1:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,format=yuv420p[v1];
-    [2:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,format=yuv420p[v2];
-    [3:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,format=yuv420p[v3];
-    [4:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,format=yuv420p[v4];
-    [5:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,format=yuv420p[v5];
-    [6:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,format=yuv420p[v6];
-    [v0][v1][v2][v3][v4][v5][v6]concat=n=7:v=1:a=0[vid];
-    [vid]subtitles='$SRT_FILE':force_style='FontName=Arial,FontSize=34,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,MarginV=96'[vout]
-  " \
-  -map "[vout]" \
-  -r 30 \
-  -c:v libx264 \
-  -preset medium \
-  -crf 20 \
-  -movflags +faststart \
-  "$OUT_VIDEO"
+  local srt_escaped
+  srt_escaped="${SRT_FILE//\\/\\\\}"
+  srt_escaped="${srt_escaped//:/\\:}"
+  ffmpeg \
+    -y \
+    -i "$BASE_VIDEO" \
+    -vf "subtitles='${srt_escaped}':force_style='FontName=DejaVu Sans,FontSize=36,PrimaryColour=&H00FFFFFF,OutlineColour=&H00101010,BorderStyle=1,Outline=2,Shadow=0,MarginV=96'" \
+    -r 30 \
+    -c:v libx264 \
+    -preset medium \
+    -crf 20 \
+    -movflags +faststart \
+    "$OUT_VIDEO"
 }
 
 render_without_subtitles() {
-ffmpeg \
-  -y \
-  -loop 1 -t 4 -i "$ASSETS_DIR/01-title.png" \
-  -loop 1 -t 5 -i "$ASSETS_DIR/02-income.png" \
-  -loop 1 -t 5 -i "$ASSETS_DIR/03-expenses.png" \
-  -loop 1 -t 5 -i "$ASSETS_DIR/04-receipts.png" \
-  -loop 1 -t 5 -i "$ASSETS_DIR/05-summary.png" \
-  -loop 1 -t 4 -i "$ASSETS_DIR/06-export.png" \
-  -loop 1 -t 2 -i "$ASSETS_DIR/07-endcard.png" \
-  -filter_complex "
-    [0:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,format=yuv420p[v0];
-    [1:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,format=yuv420p[v1];
-    [2:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,format=yuv420p[v2];
-    [3:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,format=yuv420p[v3];
-    [4:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,format=yuv420p[v4];
-    [5:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,format=yuv420p[v5];
-    [6:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,format=yuv420p[v6];
-    [v0][v1][v2][v3][v4][v5][v6]concat=n=7:v=1:a=0[vout]
-  " \
-  -map "[vout]" \
-  -r 30 \
-  -c:v libx264 \
-  -preset medium \
-  -crf 20 \
-  -movflags +faststart \
-  "$OUT_VIDEO"
+  cp "$BASE_VIDEO" "$OUT_VIDEO"
 }
 
-if ! render_with_subtitles; then
-  echo "Subtitle render failed; retrying without subtitles."
+render_base_video
+
+if [[ -f "$SRT_FILE" ]]; then
+  if ! render_with_subtitles; then
+    echo "Subtitle burn-in failed; publishing clean motion cut instead."
+    render_without_subtitles
+  fi
+else
+  echo "Subtitle file not found; publishing clean motion cut."
   render_without_subtitles
 fi
+
+rm -f "$BASE_VIDEO"
 
 echo "Promo video created: $OUT_VIDEO"
