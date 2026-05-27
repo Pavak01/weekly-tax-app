@@ -6,6 +6,8 @@ on:
     paths:
       - "ACCOUNT-DELETION.html"
       - "ACCOUNT-DELETION.md"
+      - "PRIVACY-POLICY.html"
+      - "PRIVACY-POLICY.md"
       - ".github/workflows/github-pages-account-deletion.yml"
   workflow_dispatch:
 
@@ -32,6 +34,9 @@ jobs:
         run: |
           mkdir -p site
           cp ACCOUNT-DELETION.html site/ACCOUNT-DELETION.html
+          cp ACCOUNT-DELETION.md site/ACCOUNT-DELETION.md
+          cp PRIVACY-POLICY.html site/PRIVACY-POLICY.html
+          cp PRIVACY-POLICY.md site/PRIVACY-POLICY.md
           cp ACCOUNT-DELETION.html site/index.html
 
       - name: Upload Pages artifact
