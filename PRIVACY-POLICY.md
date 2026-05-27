@@ -1,8 +1,41 @@
-# Privacy Policy (Draft)
+# Privacy Policy
 
-Last updated: 20 May 2026
+Last updated: 27 May 2026
 
 This Privacy Policy explains how Weekly Tax App collects, uses, stores, and protects your information when you use the mobile app and backend API.
+
+App name on Google Play: Weekly Tax App
+Developer name on Google Play: Pavak01
+
+## Data deletion request (Google Play)
+
+To request deletion of your account and personal data:
+
+1. Email `support@aplccommodities.com` from the same email address used in your account.
+2. Use subject line: `Account Deletion Request`.
+3. Include your full name and this confirmation statement: `I request permanent deletion of my Weekly Tax App account and associated data.`
+4. We may request identity verification from the registered account email before processing.
+
+Public deletion request page:
+- [ACCOUNT-DELETION.html](ACCOUNT-DELETION.html)
+
+Processing target:
+- We target completion within 30 days of receiving a verified request.
+
+### What we delete vs what may be retained
+
+Deleted after a verified deletion request:
+- Account profile data
+- Weekly/monthly/daily entry records
+- Expense records
+- Receipt metadata and receipt files in active storage
+- Tax summary records linked to the account
+- Two-step verification secret and reset metadata linked to the account
+
+May be retained for limited periods:
+- Security and abuse-prevention logs: retained for up to 30 days
+- Backup snapshots: retained until backup rotation expires (typically up to 30 days)
+- Data required by applicable law: retained only as legally required
 
 ## 1. Who this applies to
 
@@ -77,7 +110,7 @@ We may disclose data if required by law or valid legal process.
 
 - Data remains stored until deleted by you or by service administrators according to operational requirements.
 - The app supports deletion of week-level data and clearing all entries, which removes linked records and associated receipt files from configured storage paths.
-- Backup copies may persist for operational recovery windows.
+- Backup copies may persist for operational recovery windows (typically up to 30 days).
 
 ## 7. Security measures
 
@@ -122,7 +155,6 @@ For privacy questions or requests, contact the app operator/support team and inc
 ## 13. Account deletion link
 
 Public account deletion request page:
-- [ACCOUNT-DELETION.md](ACCOUNT-DELETION.md)
 - [ACCOUNT-DELETION.html](ACCOUNT-DELETION.html)
 
 ---
