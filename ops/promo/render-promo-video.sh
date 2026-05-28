@@ -54,13 +54,13 @@ render_base_video() {
     -loop 1 -t 4.5 -i "$ASSETS_DIR/06-export.png" \
     -loop 1 -t 2.6 -i "$ASSETS_DIR/07-endcard.png" \
     -filter_complex "
-      [0:v]scale=1188:2112,crop=1080:1920:x='(in_w-out_w)/2+16*sin(0.45*t)':y='(in_h-out_h)/2+10*cos(0.31*t)',trim=duration=4.5,setpts=PTS-STARTPTS,fps=30,format=yuv420p[v0];
-      [1:v]scale=1188:2112,crop=1080:1920:x='(in_w-out_w)/2+16*sin(0.45*t)':y='(in_h-out_h)/2+10*cos(0.31*t)',trim=duration=5.5,setpts=PTS-STARTPTS,fps=30,format=yuv420p[v1];
-      [2:v]scale=1188:2112,crop=1080:1920:x='(in_w-out_w)/2+16*sin(0.45*t)':y='(in_h-out_h)/2+10*cos(0.31*t)',trim=duration=5.5,setpts=PTS-STARTPTS,fps=30,format=yuv420p[v2];
-      [3:v]scale=1188:2112,crop=1080:1920:x='(in_w-out_w)/2+16*sin(0.45*t)':y='(in_h-out_h)/2+10*cos(0.31*t)',trim=duration=5.5,setpts=PTS-STARTPTS,fps=30,format=yuv420p[v3];
-      [4:v]scale=1188:2112,crop=1080:1920:x='(in_w-out_w)/2+16*sin(0.45*t)':y='(in_h-out_h)/2+10*cos(0.31*t)',trim=duration=5.5,setpts=PTS-STARTPTS,fps=30,format=yuv420p[v4];
-      [5:v]scale=1188:2112,crop=1080:1920:x='(in_w-out_w)/2+16*sin(0.45*t)':y='(in_h-out_h)/2+10*cos(0.31*t)',trim=duration=4.5,setpts=PTS-STARTPTS,fps=30,format=yuv420p[v5];
-      [6:v]scale=1188:2112,crop=1080:1920:x='(in_w-out_w)/2+16*sin(0.45*t)':y='(in_h-out_h)/2+10*cos(0.31*t)',trim=duration=2.6,setpts=PTS-STARTPTS,fps=30,format=yuv420p[v6];
+      [0:v]scale=1020:1810:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=0x0f172a,trim=duration=4.5,setpts=PTS-STARTPTS,fps=30,format=yuv420p[v0];
+      [1:v]scale=1020:1810:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=0x0f172a,trim=duration=5.5,setpts=PTS-STARTPTS,fps=30,format=yuv420p[v1];
+      [2:v]scale=1020:1810:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=0x0f172a,trim=duration=5.5,setpts=PTS-STARTPTS,fps=30,format=yuv420p[v2];
+      [3:v]scale=1020:1810:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=0x0f172a,trim=duration=5.5,setpts=PTS-STARTPTS,fps=30,format=yuv420p[v3];
+      [4:v]scale=1020:1810:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=0x0f172a,trim=duration=5.5,setpts=PTS-STARTPTS,fps=30,format=yuv420p[v4];
+      [5:v]scale=1020:1810:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=0x0f172a,trim=duration=4.5,setpts=PTS-STARTPTS,fps=30,format=yuv420p[v5];
+      [6:v]scale=1020:1810:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=0x0f172a,trim=duration=2.6,setpts=PTS-STARTPTS,fps=30,format=yuv420p[v6];
       [v0][v1]xfade=transition=fade:duration=0.6:offset=3.9[x1];
       [x1][v2]xfade=transition=fade:duration=0.6:offset=8.8[x2];
       [x2][v3]xfade=transition=fade:duration=0.6:offset=13.7[x3];
@@ -88,7 +88,7 @@ render_with_subtitles() {
   ffmpeg \
     -y \
     -i "$BASE_VIDEO" \
-    -vf "subtitles='${srt_escaped}':force_style='FontName=DejaVu Sans,FontSize=36,PrimaryColour=&H00FFFFFF,OutlineColour=&H00101010,BorderStyle=1,Outline=2,Shadow=0,MarginV=96'" \
+    -vf "subtitles='${srt_escaped}':force_style='FontName=DejaVu Sans,FontSize=24,PrimaryColour=&H00FFFFFF,OutlineColour=&H00101010,BorderStyle=1,Outline=2,Shadow=0,MarginV=70'" \
     -r 30 \
     -c:v libx264 \
     -preset medium \
@@ -122,6 +122,20 @@ generate_voiceover() {
   local narration_text
   narration_text="$(build_narration_text)"
 
+  # Prefer neural voices first for more natural delivery.
+  if command -v edge-tts >/dev/null 2>&1; then
+    local edge_mp3
+    edge_mp3="$OUT_DIR/weekly-tax-app-voice.mp3"
+    edge-tts \
+      --voice "en-US-JennyNeural" \
+      --rate "+2%" \
+      --text "$narration_text" \
+      --write-media "$edge_mp3"
+    ffmpeg -y -i "$edge_mp3" -ar 48000 -ac 2 "$VOICE_WAV"
+    rm -f "$edge_mp3"
+    return 0
+  fi
+
   if command -v say >/dev/null 2>&1; then
     local voice_aiff
     voice_aiff="$OUT_DIR/weekly-tax-app-voice.aiff"
@@ -138,7 +152,7 @@ generate_voiceover() {
     return 0
   fi
 
-  echo "No TTS engine available (say/espeak-ng). Rendering without narration."
+  echo "No TTS engine available (edge-tts/say/espeak-ng). Rendering without narration."
   return 1
 }
 
