@@ -10,8 +10,11 @@ ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 ASSETS_DIR="$ROOT_DIR/ops/promo/assets"
 OUT_DIR="$ROOT_DIR/ops/promo/out"
 BASE_VIDEO="$OUT_DIR/weekly-tax-app-promo-30s-base.mp4"
+VIDEO_WITH_SUBS="$OUT_DIR/weekly-tax-app-promo-30s-subs.mp4"
 OUT_VIDEO="$OUT_DIR/weekly-tax-app-promo-30s.mp4"
 SRT_FILE="$ROOT_DIR/ops/promo/promo-subtitles.srt"
+NARRATION_FILE="$ROOT_DIR/ops/promo/narration.txt"
+VOICE_WAV="$OUT_DIR/weekly-tax-app-voice.wav"
 
 mkdir -p "$OUT_DIR"
 
@@ -31,6 +34,11 @@ done
 
 if ! command -v ffmpeg >/dev/null 2>&1; then
   echo "ffmpeg is not installed. Install ffmpeg and run again."
+  exit 1
+fi
+
+if ! command -v ffprobe >/dev/null 2>&1; then
+  echo "ffprobe is required for duration checks. Install ffmpeg package with ffprobe."
   exit 1
 fi
 
@@ -65,6 +73,10 @@ render_base_video() {
     -c:v libx264 \
     -preset medium \
     -crf 20 \
+    -pix_fmt yuv420p \
+    -profile:v high \
+    -level:v 4.1 \
+    -g 60 \
     -movflags +faststart \
     "$BASE_VIDEO"
 }
@@ -81,12 +93,93 @@ render_with_subtitles() {
     -c:v libx264 \
     -preset medium \
     -crf 20 \
+    -pix_fmt yuv420p \
+    -profile:v high \
+    -level:v 4.1 \
+    -g 60 \
     -movflags +faststart \
-    "$OUT_VIDEO"
+    "$VIDEO_WITH_SUBS"
 }
 
 render_without_subtitles() {
-  cp "$BASE_VIDEO" "$OUT_VIDEO"
+  cp "$BASE_VIDEO" "$VIDEO_WITH_SUBS"
+}
+
+build_narration_text() {
+  if [[ -f "$NARRATION_FILE" ]]; then
+    cat "$NARRATION_FILE"
+  else
+    cat <<'EOF'
+Still tracking income in notes and spreadsheets?
+Qbit gives you one weekly workflow for income and expenses.
+You get instant totals and a clear year to date audit view.
+So tax time is calmer, with fewer surprises.
+EOF
+  fi
+}
+
+generate_voiceover() {
+  local narration_text
+  narration_text="$(build_narration_text)"
+
+  if command -v say >/dev/null 2>&1; then
+    local voice_aiff
+    voice_aiff="$OUT_DIR/weekly-tax-app-voice.aiff"
+    say -v Samantha -r 185 -o "$voice_aiff" "$narration_text"
+    ffmpeg -y -i "$voice_aiff" -ar 48000 -ac 2 "$VOICE_WAV"
+    rm -f "$voice_aiff"
+    return 0
+  fi
+
+  if command -v espeak-ng >/dev/null 2>&1; then
+    espeak-ng -v en-us -s 175 -w "$VOICE_WAV" "$narration_text"
+    ffmpeg -y -i "$VOICE_WAV" -ar 48000 -ac 2 "$VOICE_WAV.tmp.wav"
+    mv "$VOICE_WAV.tmp.wav" "$VOICE_WAV"
+    return 0
+  fi
+
+  echo "No TTS engine available (say/espeak-ng). Rendering without narration."
+  return 1
+}
+
+finalize_quicktime_mp4() {
+  local video_duration
+  video_duration="$(ffprobe -v error -show_entries format=duration -of default=nk=1:nw=1 "$VIDEO_WITH_SUBS")"
+
+  if [[ -f "$VOICE_WAV" ]]; then
+    ffmpeg \
+      -y \
+      -i "$VIDEO_WITH_SUBS" \
+      -i "$VOICE_WAV" \
+      -filter_complex "[1:a]loudnorm=I=-16:LRA=11:TP=-1.5,atrim=duration=${video_duration},apad[aout]" \
+      -map 0:v:0 \
+      -map "[aout]" \
+      -c:v copy \
+      -c:a aac \
+      -b:a 160k \
+      -ar 48000 \
+      -ac 2 \
+      -movflags +faststart \
+      -shortest \
+      "$OUT_VIDEO"
+  else
+    ffmpeg \
+      -y \
+      -f lavfi \
+      -t "$video_duration" \
+      -i anullsrc=r=48000:cl=stereo \
+      -i "$VIDEO_WITH_SUBS" \
+      -map 1:v:0 \
+      -map 0:a:0 \
+      -c:v copy \
+      -c:a aac \
+      -b:a 128k \
+      -ar 48000 \
+      -ac 2 \
+      -movflags +faststart \
+      -shortest \
+      "$OUT_VIDEO"
+  fi
 }
 
 render_base_video
@@ -101,6 +194,12 @@ else
   render_without_subtitles
 fi
 
-rm -f "$BASE_VIDEO"
+if ! generate_voiceover; then
+  echo "Voiceover unavailable; muxing compatibility audio track only."
+fi
+
+finalize_quicktime_mp4
+
+rm -f "$BASE_VIDEO" "$VIDEO_WITH_SUBS" "$VOICE_WAV"
 
 echo "Promo video created: $OUT_VIDEO"
