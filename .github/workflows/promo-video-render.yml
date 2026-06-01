@@ -67,6 +67,9 @@ jobs:
       - name: Upload promo artifact
         uses: actions/upload-artifact@v4
         with:
-          name: weekly-tax-app-promo-15s
-          path: ops/promo/out/weekly-tax-app-promo-15s.mp4
+          name: weekly-tax-app-promo-15s-variants
+          path: |
+            ops/promo/out/weekly-tax-app-promo-15s-minimal.mp4
+            ops/promo/out/weekly-tax-app-promo-15s-bold.mp4
+            ops/promo/out/weekly-tax-app-promo-15s-neutral.mp4
           if-no-files-found: error

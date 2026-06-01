@@ -10,8 +10,7 @@ ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 ASSETS_DIR="$ROOT_DIR/ops/promo/assets"
 OUT_DIR="$ROOT_DIR/ops/promo/out"
 BASE_VIDEO="$OUT_DIR/weekly-tax-app-promo-15s-base.mp4"
-VIDEO_WITH_SUBS="$OUT_DIR/weekly-tax-app-promo-15s-subs.mp4"
-OUT_VIDEO="$OUT_DIR/weekly-tax-app-promo-15s.mp4"
+OUT_PREFIX="$OUT_DIR/weekly-tax-app-promo-15s"
 SRT_FILE="$ROOT_DIR/ops/promo/promo-subtitles.srt"
 
 mkdir -p "$OUT_DIR"
@@ -79,14 +78,39 @@ render_base_video() {
     "$BASE_VIDEO"
 }
 
+subtitle_style_for_theme() {
+  local theme="$1"
+  case "$theme" in
+    minimal)
+      echo "FontName=DejaVu Sans,FontSize=20,PrimaryColour=&H00EAF2F5,BackColour=&H55000000,BorderStyle=3,Outline=0,Shadow=0,Alignment=8,MarginV=122,MarginL=88,MarginR=88"
+      ;;
+    bold)
+      echo "FontName=DejaVu Sans,FontSize=26,PrimaryColour=&H00FFFFFF,BackColour=&H7A0D2740,BorderStyle=3,Outline=0,Shadow=0,Alignment=8,MarginV=108,MarginL=64,MarginR=64"
+      ;;
+    neutral)
+      echo "FontName=DejaVu Sans,FontSize=22,PrimaryColour=&H00F4F6F7,BackColour=&H66000000,BorderStyle=3,Outline=0,Shadow=0,Alignment=8,MarginV=114,MarginL=76,MarginR=76"
+      ;;
+    *)
+      echo "Unsupported subtitle theme: $theme" >&2
+      return 1
+      ;;
+  esac
+}
+
 render_with_subtitles() {
+  local theme="$1"
+  local out_path="$2"
+  local style
   local srt_escaped
+
+  style="$(subtitle_style_for_theme "$theme")"
   srt_escaped="${SRT_FILE//\\/\\\\}"
   srt_escaped="${srt_escaped//:/\\:}"
+
   ffmpeg \
     -y \
     -i "$BASE_VIDEO" \
-    -vf "subtitles='${srt_escaped}':force_style='FontName=DejaVu Sans,FontSize=22,PrimaryColour=&H00EAF2F5,BackColour=&H66000000,BorderStyle=3,Outline=0,Shadow=0,Alignment=8,MarginV=110,MarginL=70,MarginR=70'" \
+    -vf "subtitles='${srt_escaped}':force_style='${style}'" \
     -r 30 \
     -c:v libx264 \
     -preset medium \
@@ -96,23 +120,26 @@ render_with_subtitles() {
     -level:v 4.1 \
     -g 60 \
     -movflags +faststart \
-    "$VIDEO_WITH_SUBS"
+    "$out_path"
 }
 
 render_without_subtitles() {
-  cp "$BASE_VIDEO" "$VIDEO_WITH_SUBS"
+  local out_path="$1"
+  cp "$BASE_VIDEO" "$out_path"
 }
 
 finalize_quicktime_mp4() {
+  local in_video="$1"
+  local out_video="$2"
   local video_duration
-  video_duration="$(ffprobe -v error -show_entries format=duration -of default=nk=1:nw=1 "$VIDEO_WITH_SUBS")"
+  video_duration="$(ffprobe -v error -show_entries format=duration -of default=nk=1:nw=1 "$in_video")"
 
   ffmpeg \
     -y \
     -f lavfi \
     -t "$video_duration" \
     -i anullsrc=r=48000:cl=stereo \
-    -i "$VIDEO_WITH_SUBS" \
+    -i "$in_video" \
     -map 1:v:0 \
     -map 0:a:0 \
     -c:v copy \
@@ -122,23 +149,29 @@ finalize_quicktime_mp4() {
     -ac 2 \
     -movflags +faststart \
     -shortest \
-    "$OUT_VIDEO"
+    "$out_video"
+}
+
+render_theme_variant() {
+  local theme="$1"
+  local subs_video="$OUT_PREFIX-${theme}-subs.mp4"
+  local final_video="$OUT_PREFIX-${theme}.mp4"
+
+  if [[ -f "$SRT_FILE" ]]; then
+    render_with_subtitles "$theme" "$subs_video"
+  else
+    echo "Subtitle file not found; publishing clean cut for theme: $theme"
+    render_without_subtitles "$subs_video"
+  fi
+
+  finalize_quicktime_mp4 "$subs_video" "$final_video"
+  rm -f "$subs_video"
+  echo "Promo video created ($theme): $final_video"
 }
 
 render_base_video
+render_theme_variant "minimal"
+render_theme_variant "bold"
+render_theme_variant "neutral"
 
-if [[ -f "$SRT_FILE" ]]; then
-  if ! render_with_subtitles; then
-    echo "Subtitle burn-in failed; publishing clean motion cut instead."
-    render_without_subtitles
-  fi
-else
-  echo "Subtitle file not found; publishing clean motion cut."
-  render_without_subtitles
-fi
-
-finalize_quicktime_mp4
-
-rm -f "$BASE_VIDEO" "$VIDEO_WITH_SUBS"
-
-echo "Promo video created: $OUT_VIDEO"
+rm -f "$BASE_VIDEO"
