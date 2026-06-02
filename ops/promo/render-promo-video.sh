@@ -9,11 +9,13 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 ASSETS_DIR="$ROOT_DIR/ops/promo/assets"
 OUT_DIR="$ROOT_DIR/ops/promo/out"
+PREP_DIR="$OUT_DIR/prepped-assets"
 BASE_VIDEO="$OUT_DIR/weekly-tax-app-promo-15s-base.mp4"
 OUT_PREFIX="$OUT_DIR/weekly-tax-app-promo-15s"
 SRT_FILE="$ROOT_DIR/ops/promo/promo-subtitles.srt"
 
 mkdir -p "$OUT_DIR"
+mkdir -p "$PREP_DIR"
 
 for file in \
   01-title.png \
@@ -40,16 +42,85 @@ if ! command -v ffprobe >/dev/null 2>&1; then
 fi
 
 # Build a concise 15-second cut with subtle crossfades.
+detect_crop_filter() {
+  local input_path="$1"
+  local src_w src_h crop_line crop_spec crop_w crop_h crop_x crop_y
+  local source_area crop_area
+
+  src_w="$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=p=0 "$input_path")"
+  src_h="$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "$input_path")"
+
+  crop_line="$(
+    ffmpeg -hide_banner -loglevel info -loop 1 -t 0.2 -i "$input_path" \
+      -vf "cropdetect=limit=0.03:round=2:reset=0" -frames:v 6 -f null - 2>&1 \
+      | sed -n 's/.*crop=\([0-9:]*\).*/\1/p' | tail -n 1
+  )"
+
+  if [[ -z "$crop_line" ]]; then
+    echo ""
+    return 0
+  fi
+
+  IFS=':' read -r crop_w crop_h crop_x crop_y <<<"$crop_line"
+
+  if [[ -z "$crop_w" || -z "$crop_h" || -z "$crop_x" || -z "$crop_y" ]]; then
+    echo ""
+    return 0
+  fi
+
+  source_area=$((src_w * src_h))
+  crop_area=$((crop_w * crop_h))
+
+  # Apply auto-crop only when a major blank-margin capture is detected.
+  if (( crop_w < src_w && crop_h < src_h && crop_area * 100 <= source_area * 55 )); then
+    crop_spec="crop=${crop_w}:${crop_h}:${crop_x}:${crop_y}"
+    echo "$crop_spec"
+    return 0
+  fi
+
+  echo ""
+}
+
+prepare_asset() {
+  local file_name="$1"
+  local src_path="$ASSETS_DIR/$file_name"
+  local out_path="$PREP_DIR/$file_name"
+  local crop_filter
+
+  crop_filter="$(detect_crop_filter "$src_path")"
+
+  if [[ -n "$crop_filter" ]]; then
+    echo "Auto-cropping $file_name with $crop_filter"
+    ffmpeg -y -i "$src_path" -vf "$crop_filter" -frames:v 1 "$out_path" >/dev/null 2>&1
+  else
+    cp "$src_path" "$out_path"
+  fi
+}
+
+prepare_assets() {
+  rm -f "$PREP_DIR"/*.png
+  for file in \
+    01-title.png \
+    02-income.png \
+    03-expenses.png \
+    04-receipts.png \
+    05-summary.png \
+    06-export.png \
+    07-endcard.png; do
+    prepare_asset "$file"
+  done
+}
+
 render_base_video() {
   ffmpeg \
     -y \
-    -loop 1 -t 2.7 -i "$ASSETS_DIR/01-title.png" \
-    -loop 1 -t 2.7 -i "$ASSETS_DIR/02-income.png" \
-    -loop 1 -t 2.7 -i "$ASSETS_DIR/03-expenses.png" \
-    -loop 1 -t 2.7 -i "$ASSETS_DIR/04-receipts.png" \
-    -loop 1 -t 2.7 -i "$ASSETS_DIR/05-summary.png" \
-    -loop 1 -t 1.8 -i "$ASSETS_DIR/06-export.png" \
-    -loop 1 -t 1.8 -i "$ASSETS_DIR/07-endcard.png" \
+    -loop 1 -t 2.7 -i "$PREP_DIR/01-title.png" \
+    -loop 1 -t 2.7 -i "$PREP_DIR/02-income.png" \
+    -loop 1 -t 2.7 -i "$PREP_DIR/03-expenses.png" \
+    -loop 1 -t 2.7 -i "$PREP_DIR/04-receipts.png" \
+    -loop 1 -t 2.7 -i "$PREP_DIR/05-summary.png" \
+    -loop 1 -t 1.8 -i "$PREP_DIR/06-export.png" \
+    -loop 1 -t 1.8 -i "$PREP_DIR/07-endcard.png" \
     -filter_complex "
       [0:v]scale=1020:1810:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=0x0f172a,trim=duration=2.7,setpts=PTS-STARTPTS,fps=30,format=yuv420p[v0];
       [1:v]scale=1020:1810:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=0x0f172a,trim=duration=2.7,setpts=PTS-STARTPTS,fps=30,format=yuv420p[v1];
@@ -169,9 +240,11 @@ render_theme_variant() {
   echo "Promo video created ($theme): $final_video"
 }
 
+prepare_assets
 render_base_video
 render_theme_variant "minimal"
 render_theme_variant "bold"
 render_theme_variant "neutral"
 
 rm -f "$BASE_VIDEO"
+rm -f "$PREP_DIR"/*.png
