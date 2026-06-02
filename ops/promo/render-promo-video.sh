@@ -50,9 +50,11 @@ detect_crop_filter() {
   src_w="$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=p=0 "$input_path")"
   src_h="$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "$input_path")"
 
+  # Detect non-empty content by edges, which works when margin color is not black.
   crop_line="$(
     ffmpeg -hide_banner -loglevel info -loop 1 -t 0.2 -i "$input_path" \
-      -vf "cropdetect=limit=0.03:round=2:reset=0" -frames:v 6 -f null - 2>&1 \
+      -vf "format=gray,edgedetect=low=0.08:high=0.25,cropdetect=limit=0.02:round=2:reset=0" \
+      -frames:v 8 -f null - 2>&1 \
       | sed -n 's/.*crop=\([0-9:]*\).*/\1/p' | tail -n 1
   )"
 
@@ -75,6 +77,12 @@ detect_crop_filter() {
   if (( crop_w < src_w && crop_h < src_h && crop_area * 100 <= source_area * 55 )); then
     crop_spec="crop=${crop_w}:${crop_h}:${crop_x}:${crop_y}"
     echo "$crop_spec"
+    return 0
+  fi
+
+  # Fallback for browser captures where app is rendered in top-left quarter on a doubled canvas.
+  if (( src_w >= 1200 && src_h >= 2400 )); then
+    echo "crop=iw/2:ih/2:0:0"
     return 0
   fi
 
