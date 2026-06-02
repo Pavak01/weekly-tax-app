@@ -2,6 +2,7 @@
 set -euo pipefail
 
 # Render a 15s vertical promo from static screenshots.
+# Source assets include the latest Qbit header lockup.
 # Requires ffmpeg to be installed.
 # Usage:
 #   ./ops/promo/render-promo-video.sh
