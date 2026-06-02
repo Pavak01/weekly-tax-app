@@ -82,13 +82,13 @@ subtitle_style_for_theme() {
   local theme="$1"
   case "$theme" in
     minimal)
-      echo "FontName=DejaVu Sans,FontSize=20,PrimaryColour=&H00EAF2F5,BackColour=&H55000000,BorderStyle=3,Outline=0,Shadow=0,Alignment=8,MarginV=122,MarginL=88,MarginR=88"
+      echo "FontName=DejaVu Sans,FontSize=20,PrimaryColour=&H004D3B1F,BackColour=&H55F4F6F8,BorderStyle=3,Outline=0,Shadow=0,Alignment=8,MarginV=122,MarginL=88,MarginR=88"
       ;;
     bold)
-      echo "FontName=DejaVu Sans,FontSize=26,PrimaryColour=&H00FFFFFF,BackColour=&H7A0D2740,BorderStyle=3,Outline=0,Shadow=0,Alignment=8,MarginV=108,MarginL=64,MarginR=64"
+      echo "FontName=DejaVu Sans,FontSize=26,PrimaryColour=&H004D3B1F,BackColour=&H40D7E6F7,BorderStyle=3,Outline=0,Shadow=0,Alignment=8,MarginV=108,MarginL=64,MarginR=64"
       ;;
     neutral)
-      echo "FontName=DejaVu Sans,FontSize=22,PrimaryColour=&H00F4F6F7,BackColour=&H66000000,BorderStyle=3,Outline=0,Shadow=0,Alignment=8,MarginV=114,MarginL=76,MarginR=76"
+      echo "FontName=DejaVu Sans,FontSize=22,PrimaryColour=&H004D3B1F,BackColour=&H50E6ECEF,BorderStyle=3,Outline=0,Shadow=0,Alignment=8,MarginV=114,MarginL=76,MarginR=76"
       ;;
     *)
       echo "Unsupported subtitle theme: $theme" >&2
