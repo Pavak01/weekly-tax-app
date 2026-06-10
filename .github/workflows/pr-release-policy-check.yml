@@ -1,0 +1,119 @@
+name: PR Release Policy Check
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  validate-release-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR template policy sections
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.pull_request.body || "";
+            const title = context.payload.pull_request.title || "";
+
+            function isChecked(label) {
+              const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+              const re = new RegExp(`- \\[[xX]\\]\\s+${escaped}`, "m");
+              return re.test(body);
+            }
+
+            function extractField(label) {
+              const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+              const re = new RegExp(`-\\s+${escaped}\\s*(.*)$`, "m");
+              const match = body.match(re);
+              return (match?.[1] || "").trim();
+            }
+
+            function extractApproval(label) {
+              const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+              const re = new RegExp(`-\\s+\\[([ xX])\\]\\s+${escaped}\\s*(.*)$`, "m");
+              const match = body.match(re);
+              return {
+                checked: !!match && /x/i.test(match[1]),
+                value: (match?.[2] || "").trim()
+              };
+            }
+
+            const releaseImpacting =
+              isChecked("Mobile app") ||
+              isChecked("Backend API") ||
+              isChecked("Release pipeline/config") ||
+              isChecked("Hotfix") ||
+              isChecked("Release candidate");
+
+            core.info(`PR: ${title}`);
+            core.info(`Release-impacting: ${releaseImpacting}`);
+
+            if (!releaseImpacting) {
+              core.info("Non-release PR detected; release provenance/sign-off checks skipped.");
+              return;
+            }
+
+            const requiredFields = [
+              "Branch:",
+              "Commit SHA:",
+              "EAS Build ID (if applicable):",
+              "Version Code / Version Name (if applicable):",
+              "Artifact URL (if applicable):",
+              "Release notes link:"
+            ];
+
+            const missing = [];
+            for (const field of requiredFields) {
+              const value = extractField(field);
+              if (!value) {
+                missing.push(`Missing value for \`${field}\``);
+              }
+            }
+
+            const policyChecks = [
+              "I reviewed [ops/RELEASE-CONTROL-POLICY.md](ops/RELEASE-CONTROL-POLICY.md)",
+              "I completed [ops/PRE-RELEASE-CHECKLIST.md](ops/PRE-RELEASE-CHECKLIST.md) for release-impacting changes",
+              "This change is built from `main` or approved `release/*`",
+              "This PR does not introduce untracked release drift"
+            ];
+
+            for (const check of policyChecks) {
+              if (!isChecked(check)) {
+                missing.push(`Unchecked policy item: \`${check}\``);
+              }
+            }
+
+            const approvals = [
+              { label: "Release Owner approval:", name: "Release Owner" },
+              { label: "QA approval:", name: "QA" },
+              { label: "Backend approval:", name: "Backend" }
+            ];
+
+            for (const approval of approvals) {
+              const parsed = extractApproval(approval.label);
+              if (!parsed.checked) {
+                missing.push(`${approval.name} sign-off checkbox is not checked`);
+                continue;
+              }
+
+              if (!parsed.value || parsed.value === "@") {
+                missing.push(`${approval.name} sign-off must include an approver handle`);
+              }
+            }
+
+            if (missing.length > 0) {
+              core.setFailed(
+                [
+                  "Release policy validation failed for a release-impacting PR:",
+                  ...missing.map((m) => `- ${m}`),
+                  "",
+                  "Fill all required fields in .github/pull_request_template.md and re-run checks."
+                ].join("\n")
+              );
+            } else {
+              core.info("Release policy validation passed.");
+            }
