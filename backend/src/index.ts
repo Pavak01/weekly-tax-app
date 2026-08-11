@@ -1620,23 +1620,21 @@ app.get("/summary/:taxYear", requireAuth, async (req: Request, res: Response) =>
     >();
 
     for (const row of rows.rows) {
-      if (row.entry_mode === "weekly") {
-        const existingWeek = weeklyBreakdownMap.get(row.week_start_date);
+      const existingWeek = weeklyBreakdownMap.get(row.week_start_date);
 
-        if (existingWeek) {
-          existingWeek.entries_logged += 1;
-          existingWeek.total_income += Number(row.income);
-          existingWeek.total_expenses += Number(row.expenses);
-        } else {
-          const [year, month, day] = row.week_start_date.split("-");
-          weeklyBreakdownMap.set(row.week_start_date, {
-            period_start: row.week_start_date,
-            period_label: `Week of ${day}-${month}-${year}`,
-            entries_logged: 1,
-            total_income: Number(row.income),
-            total_expenses: Number(row.expenses)
-          });
-        }
+      if (existingWeek) {
+        existingWeek.entries_logged += 1;
+        existingWeek.total_income += Number(row.income);
+        existingWeek.total_expenses += Number(row.expenses);
+      } else {
+        const [year, month, day] = row.week_start_date.split("-");
+        weeklyBreakdownMap.set(row.week_start_date, {
+          period_start: row.week_start_date,
+          period_label: `Week of ${day}-${month}-${year}`,
+          entries_logged: 1,
+          total_income: Number(row.income),
+          total_expenses: Number(row.expenses)
+        });
       }
 
       const monthSource = row.entry_date ?? row.week_start_date;
