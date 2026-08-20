@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as DocumentPicker from "expo-document-picker";
+import * as ImagePicker from "expo-image-picker";
 import * as FileSystem from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import {
@@ -1119,7 +1120,7 @@ export default function App(): React.JSX.Element {
     }
   }
 
-  async function pickAndUploadReceipt(): Promise<void> {
+  async function uploadReceiptAsset(uri: string, name: string, mimeType: string): Promise<void> {
     if (!currentWeekId) {
       Alert.alert("Upload", "Save a weekly entry first before uploading a receipt.");
       return;
@@ -1128,23 +1129,12 @@ export default function App(): React.JSX.Element {
     setIsUploadingReceipt(true);
 
     try {
-      const selected = await DocumentPicker.getDocumentAsync({
-        copyToCacheDirectory: true,
-        multiple: false,
-        type: ["image/*", "application/pdf"]
-      });
-
-      if (selected.canceled || selected.assets.length === 0) {
-        return;
-      }
-
-      const asset = selected.assets[0];
       const body = new FormData();
       body.append("weekly_entry_id", currentWeekId);
       body.append("receipt", {
-        uri: asset.uri,
-        name: asset.name ?? "receipt",
-        type: asset.mimeType ?? "application/octet-stream"
+        uri,
+        name,
+        type: mimeType
       } as never);
 
       const response = await fetch(`${API_BASE_URL}/receipts/upload`, {
@@ -1170,6 +1160,55 @@ export default function App(): React.JSX.Element {
     } finally {
       setIsUploadingReceipt(false);
     }
+  }
+
+  async function pickAndUploadReceipt(): Promise<void> {
+    if (!currentWeekId) {
+      Alert.alert("Upload", "Save a weekly entry first before uploading a receipt.");
+      return;
+    }
+
+    const selected = await DocumentPicker.getDocumentAsync({
+      copyToCacheDirectory: true,
+      multiple: false,
+      type: ["image/*", "application/pdf"]
+    });
+
+    if (selected.canceled || selected.assets.length === 0) {
+      return;
+    }
+
+    const asset = selected.assets[0];
+    await uploadReceiptAsset(asset.uri, asset.name ?? "receipt", asset.mimeType ?? "application/octet-stream");
+  }
+
+  async function captureAndUploadReceipt(): Promise<void> {
+    if (!currentWeekId) {
+      Alert.alert("Upload", "Save a weekly entry first before uploading a receipt.");
+      return;
+    }
+
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert(
+        "Camera access needed",
+        "Qbit needs camera access to photograph receipts. You can allow this in your device settings."
+      );
+      return;
+    }
+
+    const captured = await ImagePicker.launchCameraAsync({
+      quality: 0.7,
+      allowsEditing: false
+    });
+
+    if (captured.canceled || captured.assets.length === 0) {
+      return;
+    }
+
+    const asset = captured.assets[0];
+    const fileName = asset.fileName ?? `receipt-${Date.now()}.jpg`;
+    await uploadReceiptAsset(asset.uri, fileName, asset.mimeType ?? "image/jpeg");
   }
 
   function safeFileName(fileName: string): string {
@@ -2417,6 +2456,17 @@ export default function App(): React.JSX.Element {
                     {!!currentWeekId && (
                       <>
                         <Pressable
+                          onPress={captureAndUploadReceipt}
+                          style={[styles.primaryButton, isUploadingReceipt && styles.buttonDisabled]}
+                          disabled={isUploadingReceipt}
+                        >
+                          {isUploadingReceipt ? (
+                            <ActivityIndicator color={colors.accentText} />
+                          ) : (
+                            <Text style={styles.primaryButtonText}>Take Photo</Text>
+                          )}
+                        </Pressable>
+                        <Pressable
                           onPress={pickAndUploadReceipt}
                           style={[styles.primaryButton, isUploadingReceipt && styles.buttonDisabled]}
                           disabled={isUploadingReceipt}
@@ -2424,7 +2474,7 @@ export default function App(): React.JSX.Element {
                           {isUploadingReceipt ? (
                             <ActivityIndicator color={colors.accentText} />
                           ) : (
-                            <Text style={styles.primaryButtonText}>Upload Receipt (Image/PDF)</Text>
+                            <Text style={styles.primaryButtonText}>Choose File (Image/PDF)</Text>
                           )}
                         </Pressable>
                         <Pressable onPress={() => void loadReceipts(currentWeekId)} style={styles.refreshReceiptsButton}>

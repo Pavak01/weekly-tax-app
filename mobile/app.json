@@ -16,7 +16,15 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-asset"
+      "expo-asset",
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Allow Qbit to access your camera so you can photograph receipts.",
+          "photosPermission": false,
+          "microphonePermission": false
+        }
+      ]
     ]
   }
 }

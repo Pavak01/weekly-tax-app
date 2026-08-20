@@ -45,6 +45,14 @@
       "expo-asset",
       "expo-document-picker",
       [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Allow Qbit to access your camera so you can photograph receipts.",
+          "photosPermission": false,
+          "microphonePermission": false
+        }
+      ],
+      [
         "expo-build-properties",
         {
           "android": {
