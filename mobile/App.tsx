@@ -158,7 +158,7 @@ export default function App(): React.JSX.Element {
   const [setAside, setSetAside] = useState<number | null>(null);
   const [estimatedTax, setEstimatedTax] = useState<number | null>(null);
 
-  const [taxYear, setTaxYear] = useState("2026-27");
+  const [taxYear, setTaxYear] = useState(getCurrentTaxYear());
   const [summaryAsOfDate, setSummaryAsOfDate] = useState(getTodayDisplayDate());
   const [summary, setSummary] = useState<null | {
     as_of_date: string;
@@ -427,7 +427,7 @@ export default function App(): React.JSX.Element {
           };
 
           if (quick.taxYear) {
-            setTaxYear(quick.taxYear);
+            setTaxYear(normalizeTaxYearInput(quick.taxYear));
           }
           if (quick.summaryAsOfDate) {
             setSummaryAsOfDate(normalizeStoredDate(quick.summaryAsOfDate, getTodayDisplayDate()));
@@ -546,6 +546,24 @@ export default function App(): React.JSX.Element {
   function getTodayIsoDate(): string {
     const now = new Date();
     return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+  }
+
+  function getCurrentTaxYear(): string {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1;
+    const day = now.getDate();
+
+    const startsNewTaxYear = month > 4 || (month === 4 && day >= 6);
+    const startYear = startsNewTaxYear ? year : year - 1;
+    const endYearShort = String((startYear + 1) % 100).padStart(2, "0");
+    return `${startYear}-${endYearShort}`;
+  }
+
+  function normalizeTaxYearInput(value: string): string {
+    return value
+      .trim()
+      .replace(/[‐-―−]/g, "-");
   }
 
   function formatIsoToDisplayDate(value: string): string {
@@ -830,6 +848,10 @@ export default function App(): React.JSX.Element {
     setSummaryAsOfDate(normalized);
   }
 
+  function handleTaxYearChange(value: string): void {
+    setTaxYear(normalizeTaxYearInput(value));
+  }
+
   function fillQuickExpensePreset(): void {
     setFuel("25");
     setFuelReimbursed("0");
@@ -859,7 +881,7 @@ export default function App(): React.JSX.Element {
   }
 
   function isTaxYear(value: string): boolean {
-    return /^\d{4}-\d{2}$/.test(value);
+    return /^\d{4}-\d{2}$/.test(normalizeTaxYearInput(value));
   }
 
   async function authedFetch(path: string, init?: RequestInit): Promise<Response> {
@@ -1614,6 +1636,9 @@ export default function App(): React.JSX.Element {
     setSummary(null);
     setExportData("");
     setLastSavedAt(null);
+    setAuditEntries([]);
+    setTaxYear(getCurrentTaxYear());
+    setSummaryAsOfDate(getTodayDisplayDate());
     resetEntryDraft();
     setStatus({ kind: "info", text: "All data has been cleared." });
   }
@@ -2520,7 +2545,7 @@ export default function App(): React.JSX.Element {
 
               {screen === "summary" && (
                 <FormSection title="Year Summary Snapshot">
-                  <Field label="Tax Year (e.g. 2026-27)" value={taxYear} onChange={setTaxYear} />
+                  <Field label="Tax Year (e.g. 2026-27)" value={taxYear} onChange={handleTaxYearChange} />
                   <Field
                     label="Snapshot up to (DD-MM-YYYY)"
                     value={summaryAsOfDate}
@@ -2598,7 +2623,7 @@ export default function App(): React.JSX.Element {
 
               {screen === "audit" && (
                 <FormSection title="Audit Trail">
-                  <Field label="Tax Year (e.g. 2026-27)" value={taxYear} onChange={setTaxYear} />
+                  <Field label="Tax Year (e.g. 2026-27)" value={taxYear} onChange={handleTaxYearChange} />
                   <Text style={styles.noteText}>Review every saved entry with attached receipts and ready-to-open files.</Text>
                   <Pressable
                     onPress={fetchAuditTrail}
@@ -2685,7 +2710,7 @@ export default function App(): React.JSX.Element {
 
               {screen === "export" && (
                 <FormSection title="Export">
-                  <Field label="Tax Year (e.g. 2026-27)" value={taxYear} onChange={setTaxYear} />
+                  <Field label="Tax Year (e.g. 2026-27)" value={taxYear} onChange={handleTaxYearChange} />
                   <Pressable
                     onPress={() => {
                       void fetchExport("download");
@@ -2717,7 +2742,7 @@ export default function App(): React.JSX.Element {
               {screen === "admin" && isAdmin && (
                 <FormSection title="Admin Tooling">
                   <Text style={styles.noteText}>Use this section to monitor and publish HMRC rule versions.</Text>
-                  <Field label="Tax Year (YYYY-YY)" value={taxYear} onChange={setTaxYear} />
+                  <Field label="Tax Year (YYYY-YY)" value={taxYear} onChange={handleTaxYearChange} />
                   <Field
                     label="Publish Secret (optional)"
                     value={rulePublishSecretInput}
