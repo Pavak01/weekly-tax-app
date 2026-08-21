@@ -263,7 +263,7 @@ const styles = StyleSheet.create({
   confirmationCard: {
     marginTop: spacing.sm,
     borderWidth: 1,
-    borderColor: "#d9534f",
+    borderColor: colors.danger,
     borderRadius: 12,
     backgroundColor: "#fff2f2",
     padding: spacing.md,
@@ -272,7 +272,7 @@ const styles = StyleSheet.create({
   confirmationTitle: {
     fontSize: typography.body,
     fontWeight: "700",
-    color: "#8a1f1b"
+    color: colors.danger
   },
   confirmationHint: {
     fontSize: typography.small,
@@ -280,7 +280,7 @@ const styles = StyleSheet.create({
   },
   confirmationCode: {
     fontWeight: "700",
-    color: "#8a1f1b"
+    color: colors.danger
   },
   confirmationInput: {
     borderWidth: 1,
@@ -313,7 +313,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: "center",
     paddingVertical: spacing.sm,
-    backgroundColor: "#d9534f"
+    backgroundColor: colors.danger
   },
   confirmDeleteButtonDisabled: {
     opacity: 0.45

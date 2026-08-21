@@ -208,7 +208,7 @@ export function DangerAction({
         <Text style={styles.dangerActionLabel}>{label}</Text>
         {sublabel && <Text style={styles.dangerActionSublabel}>{sublabel}</Text>}
       </View>
-      {isLoading && <ActivityIndicator color="#d9534f" size="small" />}
+      {isLoading && <ActivityIndicator color={colors.danger} size="small" />}
     </Pressable>
   );
 }
@@ -375,7 +375,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     backgroundColor: "#ffe6e6",
     borderWidth: 1,
-    borderColor: "#d9534f"
+    borderColor: colors.danger
   },
   dangerActionDisabled: {
     opacity: 0.5
@@ -387,7 +387,7 @@ const styles = StyleSheet.create({
   dangerActionLabel: {
     fontSize: typography.body,
     fontWeight: "600",
-    color: "#d9534f"
+    color: colors.danger
   },
   dangerActionSublabel: {
     fontSize: typography.small,
