@@ -20,7 +20,7 @@ import {
   View
 } from "react-native";
 import { AppHeader } from "./src/components/AppHeader";
-import { Card, Field, PreviewPill, SmallAction, StatusBanner, SummaryRow } from "./src/components/Controls";
+import { Card, DateField, Field, PreviewPill, SmallAction, StatusBanner, SummaryRow } from "./src/components/Controls";
 import { SnapshotCard } from "./src/components/SnapshotCard";
 import { FormSection } from "./src/components/FormSection";
 import { SettingsScreen } from "./src/components/SettingsScreen";
@@ -2347,32 +2347,35 @@ export default function App(): React.JSX.Element {
                   </View>
                   {entryMode === "monthly" ? (
                     <>
-                      <Field
+                      <DateField
                         label="Month Reference Date (DD-MM-YYYY)"
                         value={entryDate}
                         onChange={handleEntryDateChange}
                         placeholder="22-04-2026"
+                        maximumDate={new Date()}
                       />
                       <Text style={styles.noteText}>Monthly bucket: {resolvedWeekStart}</Text>
                       <Text style={styles.noteText}>Use any date inside the month you want to review or submit.</Text>
                     </>
                   ) : entryMode === "daily" ? (
                     <>
-                      <Field
+                      <DateField
                         label="Daily Date (DD-MM-YYYY)"
                         value={entryDate}
                         onChange={handleEntryDateChange}
                         placeholder="22-04-2026"
+                        maximumDate={new Date()}
                       />
                       <Text style={styles.noteText}>Week bucket: {resolvedWeekStart}</Text>
                       <Text style={styles.noteText}>Use the exact day you want to record.</Text>
                     </>
                   ) : (
-                    <Field
+                    <DateField
                       label="Week Start Date (DD-MM-YYYY)"
                       value={weekStartDate}
                       onChange={handleWeekStartDateChange}
                       placeholder="14-04-2026"
+                      maximumDate={new Date()}
                     />
                   )}
                   <Field

@@ -24,7 +24,8 @@
           "photosPermission": false,
           "microphonePermission": false
         }
-      ]
+      ],
+      "@react-native-community/datetimepicker"
     ]
   }
 }
