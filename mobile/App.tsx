@@ -918,6 +918,7 @@ export default function App(): React.JSX.Element {
     sessionExpiryNoticeShown.current = false;
     setAuthToken(token);
     setAuthUser(user);
+    setStatus(null);
     await AsyncStorage.setItem(AUTH_STATE_KEY, JSON.stringify({ token, user }));
   }
 
