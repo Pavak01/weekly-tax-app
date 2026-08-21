@@ -207,7 +207,7 @@ export function SettingsScreen({
         </View>
         <View style={styles.infoRow}>
           <Text style={styles.infoLabel}>Purpose</Text>
-          <Text style={styles.infoValue}>Weekly and monthly tax tracking</Text>
+          <Text style={styles.infoValue}>Daily, weekly, and monthly tax tracking</Text>
         </View>
       </View>
     </ScrollView>

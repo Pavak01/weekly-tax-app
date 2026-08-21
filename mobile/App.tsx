@@ -483,7 +483,6 @@ export default function App(): React.JSX.Element {
             if (canRestoreSession) {
               setAuthToken(auth.token);
               setAuthUser(auth.user);
-              setStatus({ kind: "info", text: `Welcome back, ${auth.user.email}.` });
             }
           }
         }
@@ -919,6 +918,7 @@ export default function App(): React.JSX.Element {
     sessionExpiryNoticeShown.current = false;
     setAuthToken(token);
     setAuthUser(user);
+    setStatus(null);
     await AsyncStorage.setItem(AUTH_STATE_KEY, JSON.stringify({ token, user }));
   }
 
@@ -1111,7 +1111,6 @@ export default function App(): React.JSX.Element {
       setTwoFactorChallengeToken(null);
       await saveAuthState(payload.token, payload.user as AuthUser);
       setAuthMode("login");
-      setStatus({ kind: "info", text: `Signed in as ${payload.user.email}.` });
     } catch (error) {
       Alert.alert("Network error", String(error));
       setStatus({ kind: "error", text: "Network error during sign-in verification." });
@@ -1420,7 +1419,6 @@ export default function App(): React.JSX.Element {
       }
 
       await saveAuthState(payload.token, payload.user as AuthUser);
-      setStatus({ kind: "info", text: `Signed in as ${payload.user.email}.` });
     } catch (error) {
       Alert.alert("Network error", String(error));
       setStatus({ kind: "error", text: "Network error during authentication." });
@@ -2433,7 +2431,15 @@ export default function App(): React.JSX.Element {
                     />
                   </View>
 
-                  <Text style={styles.noteText}>Use DD-MM-YYYY. Entries default to this month or this Monday, and future dates are blocked.</Text>
+                  <Text style={styles.noteText}>
+                    Use DD-MM-YYYY.{" "}
+                    {entryMode === "monthly"
+                      ? "Entries default to this month"
+                      : entryMode === "daily"
+                        ? "Entries default to today"
+                        : "Entries default to this Monday"}
+                    , and future dates are blocked.
+                  </Text>
                   <Text style={[styles.noteText, { color: colors.accent, fontWeight: "700" }]}>Warning: once submitted, this entry is locked and cannot be changed.</Text>
                   <Text style={styles.noteText}>Expenses reimbursed: £{expensePreview.totalReimbursed.toFixed(2)}</Text>
 
