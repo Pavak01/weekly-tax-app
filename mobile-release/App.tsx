@@ -309,10 +309,6 @@ export default function App(): React.JSX.Element {
 
     return auditEntries
       .filter((entry) => {
-        if (auditModeFilter !== "all" && entry.entry_mode !== auditModeFilter) {
-          return false;
-        }
-
         if (companyFilter.length === 0) {
           return true;
         }
@@ -324,7 +320,7 @@ export default function App(): React.JSX.Element {
         const rightTime = new Date(right.created_at).getTime();
         return rightTime - leftTime;
       });
-  }, [auditCompanyFilter, auditEntries, auditModeFilter]);
+  }, [auditCompanyFilter, auditEntries]);
 
   const groupedAuditEntries = useMemo(() => {
     const sections = new Map<string, AuditEntry[]>();
@@ -332,16 +328,27 @@ export default function App(): React.JSX.Element {
     filteredAuditEntries.forEach((entry) => {
       const periodIso = (entry.entry_date || entry.week_start_date || "").slice(0, 10);
       const parsed = new Date(`${periodIso}T00:00:00Z`);
-      const label = Number.isNaN(parsed.getTime())
-        ? "Unknown period"
-        : parsed.toLocaleString("en-GB", { month: "long", year: "numeric" });
+
+      let label = "Unknown period";
+      if (!Number.isNaN(parsed.getTime())) {
+        if (auditModeFilter === "daily") {
+          label = parsed.toLocaleString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+        } else if (auditModeFilter === "weekly") {
+          const weekStartIso = (entry.week_start_date || periodIso).slice(0, 10);
+          const [year, month, day] = weekStartIso.split("-");
+          label = `Week of ${day}-${month}-${year}`;
+        } else {
+          label = parsed.toLocaleString("en-GB", { month: "long", year: "numeric" });
+        }
+      }
+
       const existing = sections.get(label) || [];
       existing.push(entry);
       sections.set(label, existing);
     });
 
     return Array.from(sections.entries()).map(([label, entries]) => ({ label, entries }));
-  }, [filteredAuditEntries]);
+  }, [filteredAuditEntries, auditModeFilter]);
 
   useEffect(() => {
     if (!isAdmin && screen === "admin") {
