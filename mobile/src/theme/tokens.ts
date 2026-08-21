@@ -10,6 +10,7 @@ export const colors = {
   textNote: "#6d5440",
   accent: "#b65931",
   accentText: "#f8f4e8",
+  danger: "#8a1f1b",
   accentSoft: "#f0dfca",
   accentSoftAlt: "#f4e6d4",
   summaryBg: "#f3e3cf",
