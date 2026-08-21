@@ -1,6 +1,7 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -8,7 +9,26 @@ import {
   View
 } from "react-native";
 import type { KeyboardTypeOptions } from "react-native";
+import DateTimePicker from "@react-native-community/datetimepicker";
 import { colors, radius, spacing, typography } from "../theme/tokens";
+
+function parseDisplayDateForPicker(value: string): Date | null {
+  const match = /^(\d{2})-(\d{2})-(\d{4})$/.exec(value.trim());
+  if (!match) {
+    return null;
+  }
+
+  const [, day, month, year] = match;
+  const date = new Date(Number(year), Number(month) - 1, Number(day));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatDateForDisplay(date: Date): string {
+  const day = String(date.getDate()).padStart(2, "0");
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const year = date.getFullYear();
+  return `${day}-${month}-${year}`;
+}
 
 export function Card({ children }: { children: React.ReactNode }): React.JSX.Element {
   return <View style={styles.card}>{children}</View>;
@@ -37,6 +57,57 @@ export function Field({
         keyboardType={keyboardType}
         placeholder={placeholder}
       />
+    </View>
+  );
+}
+
+export function DateField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  maximumDate
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  maximumDate?: Date;
+}): React.JSX.Element {
+  const [showPicker, setShowPicker] = useState(false);
+
+  return (
+    <View style={styles.fieldWrap}>
+      <Text style={styles.label}>{label}</Text>
+      <View style={styles.dateFieldRow}>
+        <TextInput
+          value={value}
+          onChangeText={onChange}
+          style={[styles.input, styles.dateInput]}
+          placeholder={placeholder}
+        />
+        <Pressable
+          onPress={() => setShowPicker(true)}
+          style={styles.dateIconButton}
+          accessibilityLabel="Open date picker"
+        >
+          <Text style={styles.dateIconText}>{"\u{1F4C5}"}</Text>
+        </Pressable>
+      </View>
+      {showPicker && (
+        <DateTimePicker
+          value={parseDisplayDateForPicker(value) ?? new Date()}
+          mode="date"
+          display={Platform.OS === "ios" ? "inline" : "default"}
+          maximumDate={maximumDate}
+          onChange={(event, selectedDate) => {
+            setShowPicker(false);
+            if (event.type === "set" && selectedDate) {
+              onChange(formatDateForDisplay(selectedDate));
+            }
+          }}
+        />
+      )}
     </View>
   );
 }
@@ -166,6 +237,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 10,
     backgroundColor: colors.inputBg
+  },
+  dateFieldRow: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    gap: spacing.xs
+  },
+  dateInput: {
+    flex: 1
+  },
+  dateIconButton: {
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: colors.inputBorder,
+    borderRadius: radius.md,
+    backgroundColor: colors.accentSoft
+  },
+  dateIconText: {
+    fontSize: 18
   },
   statusBanner: {
     paddingVertical: 9,
