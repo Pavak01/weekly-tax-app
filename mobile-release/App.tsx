@@ -863,17 +863,6 @@ export default function App(): React.JSX.Element {
     setTaxYear(normalizeTaxYearInput(value));
   }
 
-  function fillQuickExpensePreset(): void {
-    setFuel("25");
-    setFuelReimbursed("0");
-    setTravel("35");
-    setTravelReimbursed("0");
-    setFood("8");
-    setFoodReimbursed("0");
-    setOther("0");
-    setOtherReimbursed("0");
-  }
-
   function resetEntryDraft(): void {
     setServiceCompany("");
     setIncome("0");
@@ -2355,7 +2344,6 @@ export default function App(): React.JSX.Element {
                     ) : (
                       <SmallAction label="Use This Monday" onPress={setThisMonday} />
                     )}
-                    <SmallAction label="Fill Typical Expenses" onPress={fillQuickExpensePreset} />
                   </View>
                   {entryMode === "monthly" ? (
                     <>
