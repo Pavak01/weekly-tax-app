@@ -15,6 +15,7 @@
     "@react-native-community/datetimepicker": "8.2.0",
     "expo": "^52.0.20",
     "expo-asset": "~11.0.5",
+    "expo-clipboard": "~7.0.1",
     "expo-document-picker": "~13.0.3",
     "expo-file-system": "~18.0.12",
     "expo-image-picker": "~16.0.6",
