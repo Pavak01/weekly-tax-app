@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
+import * as Clipboard from "expo-clipboard";
 import * as FileSystem from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import {
@@ -1008,15 +1009,20 @@ export default function App(): React.JSX.Element {
       setTwoFactorSetupUri(payload.otpauth_url ?? null);
       setTwoFactorCode("");
       setStatus({ kind: "info", text: "Add the setup key to your authenticator app, then enter the 6-digit code." });
-      Alert.alert(
-        "Authenticator Setup Key",
-        `Add this key to Google Authenticator, Microsoft Authenticator, or Authy:\n\n${payload.manual_entry_key}`
-      );
     } catch (error) {
       Alert.alert("Network error", String(error));
     } finally {
       setIsLoadingTwoFactor(false);
     }
+  }
+
+  async function copyTwoFactorSetupKey(): Promise<void> {
+    if (!twoFactorSetupKey) {
+      return;
+    }
+
+    await Clipboard.setStringAsync(twoFactorSetupKey);
+    setStatus({ kind: "info", text: "Setup key copied to clipboard." });
   }
 
   async function enableTwoFactor(): Promise<void> {
@@ -2978,7 +2984,11 @@ export default function App(): React.JSX.Element {
 
                   {!twoFactorEnabled && !!twoFactorSetupKey && (
                     <>
-                      <Text style={styles.noteText}>Manual setup key: {twoFactorSetupKey}</Text>
+                      <Text style={styles.noteText}>Manual setup key:</Text>
+                      <Text selectable style={styles.setupKeyText}>
+                        {twoFactorSetupKey}
+                      </Text>
+                      <SmallAction label="Copy Key" onPress={copyTwoFactorSetupKey} />
                       {!!twoFactorSetupUri && (
                         <Text style={styles.noteText}>Authenticator setup data is ready for QR-compatible tools.</Text>
                       )}
@@ -3321,6 +3331,19 @@ const styles = StyleSheet.create({
     color: colors.textNote,
     fontSize: typography.small,
     lineHeight: 18
+  },
+  setupKeyText: {
+    marginTop: 4,
+    marginBottom: 8,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: colors.inputBorder,
+    borderRadius: radius.md,
+    backgroundColor: colors.inputBg,
+    color: colors.textMain,
+    fontSize: typography.body,
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+    letterSpacing: 1
   },
   guideItem: {
     marginTop: 6,
