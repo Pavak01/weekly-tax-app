@@ -2231,6 +2231,7 @@ export default function App(): React.JSX.Element {
               <View style={styles.quickNavBar}>
                 <SmallAction label="Entry" onPress={() => setScreen("week")} active={screen === "week"} />
                 <SmallAction label="Audit" onPress={() => setScreen("audit")} active={screen === "audit"} />
+                <SmallAction label="Summary" onPress={() => setScreen("summary")} active={screen === "summary"} />
                 <SmallAction label="Settings" onPress={() => setScreen("settings")} active={screen === "settings"} />
               </View>
 
@@ -2913,7 +2914,10 @@ export default function App(): React.JSX.Element {
                 <FormSection title="User Guide & FAQ">
                   <Text style={styles.subSection}>Quick User Guide</Text>
                   <Text style={styles.guideItem}>1. Sign in or create your account.</Text>
-                  <Text style={styles.guideItem}>2. Open the 4-line menu button in the header to access all pages.</Text>
+                  <Text style={styles.guideItem}>
+                    2. Use the Entry / Audit / Summary / Settings buttons for everyday tasks; open the 4-line menu for
+                    Export, Guide, and Admin.
+                  </Text>
                   <Text style={styles.guideItem}>3. Choose daily, weekly, or monthly mode, then enter income and expenses.</Text>
                   <Text style={styles.guideItem}>4. Add reimbursed amounts so claimable expenses stay accurate.</Text>
                   <Text style={styles.guideItem}>5. Confirm submission to save a locked record for audit traceability.</Text>
@@ -2930,11 +2934,6 @@ export default function App(): React.JSX.Element {
                   <Text style={styles.faqQuestion}>How do reimbursed expenses work?</Text>
                   <Text style={styles.noteText}>
                     Reimbursed amounts are removed from the claimable expense total so your estimate stays more accurate.
-                  </Text>
-
-                  <Text style={styles.faqQuestion}>Where is Settings now?</Text>
-                  <Text style={styles.noteText}>
-                    Open the 4-line menu in the header. Settings is placed at the bottom, separated from the main tabs.
                   </Text>
 
                   <Text style={styles.faqQuestion}>What is the Audit Trail page for?</Text>
@@ -3142,6 +3141,7 @@ const styles = StyleSheet.create({
   },
   quickNavBar: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: spacing.sm,
     marginTop: -spacing.xs,
     marginBottom: spacing.xs
