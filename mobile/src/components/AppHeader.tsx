@@ -40,16 +40,9 @@ export function AppHeader({
       {menuOpen && (
         <View style={styles.menuPanel}>
           <View style={styles.navRow}>
-            <NavButton label="This Week" active={screen === "week"} onPress={() => handleNavigate("week")} />
-            <NavButton label="Year Summary" active={screen === "summary"} onPress={() => handleNavigate("summary")} />
-            <NavButton label="Audit" active={screen === "audit"} onPress={() => handleNavigate("audit")} />
             <NavButton label="Export" active={screen === "export"} onPress={() => handleNavigate("export")} />
             {isAdmin && <NavButton label="Admin" active={screen === "admin"} onPress={() => handleNavigate("admin")} />}
             <NavButton label="Guide" active={screen === "guide"} onPress={() => handleNavigate("guide")} />
-          </View>
-          <View style={styles.menuDivider} />
-          <View style={styles.settingsRow}>
-            <NavButton label="Settings" active={screen === "settings"} onPress={() => handleNavigate("settings")} />
           </View>
         </View>
       )}
@@ -119,14 +112,5 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: spacing.sm,
     flexWrap: "wrap"
-  },
-  menuDivider: {
-    height: 1,
-    backgroundColor: colors.navText,
-    opacity: 0.45
-  },
-  settingsRow: {
-    flexDirection: "row",
-    justifyContent: "flex-end"
   }
 });
