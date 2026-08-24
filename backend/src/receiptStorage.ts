@@ -1,0 +1,102 @@
+import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+
+const bucket = process.env.RECEIPTS_S3_BUCKET ?? "";
+const region = process.env.RECEIPTS_S3_REGION ?? "auto";
+const endpoint = process.env.RECEIPTS_S3_ENDPOINT ?? "";
+const accessKeyId = process.env.RECEIPTS_S3_ACCESS_KEY_ID ?? "";
+const secretAccessKey = process.env.RECEIPTS_S3_SECRET_ACCESS_KEY ?? "";
+const forcePathStyle = String(process.env.RECEIPTS_S3_FORCE_PATH_STYLE ?? "").trim().toLowerCase() === "true";
+
+if (!bucket || !endpoint || !accessKeyId || !secretAccessKey) {
+  throw new Error(
+    "RECEIPTS_S3_BUCKET, RECEIPTS_S3_ENDPOINT, RECEIPTS_S3_ACCESS_KEY_ID, and RECEIPTS_S3_SECRET_ACCESS_KEY are required"
+  );
+}
+
+const s3 = new S3Client({
+  region,
+  endpoint,
+  forcePathStyle,
+  credentials: { accessKeyId, secretAccessKey }
+});
+
+export async function uploadReceiptObject(key: string, body: Buffer, contentType: string): Promise<void> {
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      Body: body,
+      ContentType: contentType
+    })
+  );
+}
+
+export async function deleteReceiptObject(key: string): Promise<void> {
+  await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+}
+
+export async function deleteReceiptObjects(keys: string[]): Promise<void> {
+  const uniqueKeys = Array.from(new Set(keys.map((key) => key.trim()).filter(Boolean)));
+
+  await Promise.all(
+    uniqueKeys.map(async (key) => {
+      try {
+        await deleteReceiptObject(key);
+      } catch (error) {
+        console.warn(`Failed to delete receipt object ${key}:`, error);
+      }
+    })
+  );
+}
+
+export async function getReceiptPresignedUrl(key: string, downloadFilename: string): Promise<string> {
+  const safeFilename = downloadFilename.replace(/[\r\n"]/g, "");
+  const command = new GetObjectCommand({
+    Bucket: bucket,
+    Key: key,
+    ResponseContentDisposition: `attachment; filename="${safeFilename}"`
+  });
+  return getSignedUrl(s3, command, { expiresIn: 300 });
+}
+
+const knownFileSignatures: Record<string, number[][]> = {
+  "application/pdf": [[0x25, 0x50, 0x44, 0x46]],
+  "image/jpeg": [[0xff, 0xd8, 0xff]],
+  "image/png": [[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]]
+};
+
+const dangerousSignatures: number[][] = [
+  [0x4d, 0x5a], // Windows PE executable ("MZ")
+  [0x7f, 0x45, 0x4c, 0x46], // Linux ELF executable
+  [0x23, 0x21] // shebang script ("#!")
+];
+
+function matchesSignature(buffer: Buffer, signature: number[]): boolean {
+  return signature.length <= buffer.length && signature.every((byte, index) => buffer[index] === byte);
+}
+
+function isWebp(buffer: Buffer): boolean {
+  return buffer.length >= 12 && buffer.toString("ascii", 0, 4) === "RIFF" && buffer.toString("ascii", 8, 12) === "WEBP";
+}
+
+export function receiptContentMatchesDeclaredType(buffer: Buffer, declaredMimeType: string): boolean {
+  if (dangerousSignatures.some((signature) => matchesSignature(buffer, signature))) {
+    return false;
+  }
+
+  if (declaredMimeType === "image/webp") {
+    return isWebp(buffer);
+  }
+
+  if (declaredMimeType === "text/plain") {
+    return !buffer.subarray(0, Math.min(buffer.length, 8000)).includes(0);
+  }
+
+  const signatures = knownFileSignatures[declaredMimeType];
+  if (!signatures) {
+    return false;
+  }
+
+  return signatures.some((signature) => matchesSignature(buffer, signature));
+}
