@@ -48,6 +48,7 @@ type AuthUser = {
 type TwoFactorStatusResponse = {
   enabled: boolean;
   pending_setup: boolean;
+  backup_codes_remaining?: number;
 };
 
 type ReceiptRecord = {
@@ -140,6 +141,8 @@ export default function App(): React.JSX.Element {
   const [twoFactorEnabled, setTwoFactorEnabled] = useState(false);
   const [twoFactorSetupKey, setTwoFactorSetupKey] = useState<string | null>(null);
   const [twoFactorSetupUri, setTwoFactorSetupUri] = useState<string | null>(null);
+  const [twoFactorBackupCodes, setTwoFactorBackupCodes] = useState<string[] | null>(null);
+  const [backupCodesRemaining, setBackupCodesRemaining] = useState<number | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(false);
   const [isRequestingReset, setIsRequestingReset] = useState(false);
   const [isLoadingTwoFactor, setIsLoadingTwoFactor] = useState(false);
@@ -985,6 +988,7 @@ export default function App(): React.JSX.Element {
       const payload = (await response.json()) as TwoFactorStatusResponse;
       if (response.ok) {
         setTwoFactorEnabled(Boolean(payload.enabled));
+        setBackupCodesRemaining(payload.backup_codes_remaining ?? null);
         if (!payload.pending_setup) {
           setTwoFactorSetupKey(null);
           setTwoFactorSetupUri(null);
@@ -1055,12 +1059,61 @@ export default function App(): React.JSX.Element {
       setTwoFactorSetupKey(null);
       setTwoFactorSetupUri(null);
       setTwoFactorCode("");
+      if (Array.isArray(payload.backup_codes)) {
+        setTwoFactorBackupCodes(payload.backup_codes);
+        setBackupCodesRemaining(payload.backup_codes.length);
+      }
       setStatus({ kind: "info", text: payload.message || "Two-step verification enabled." });
     } catch (error) {
       Alert.alert("Network error", String(error));
     } finally {
       setIsLoadingTwoFactor(false);
     }
+  }
+
+  async function regenerateBackupCodes(): Promise<void> {
+    if (!twoFactorCode.trim()) {
+      Alert.alert("Validation", "Enter your current authenticator code to regenerate backup codes.");
+      return;
+    }
+
+    setIsLoadingTwoFactor(true);
+    try {
+      const response = await authedFetch("/auth/2fa/backup-codes/regenerate", {
+        method: "POST",
+        body: JSON.stringify({ code: twoFactorCode.trim() })
+      });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        Alert.alert("2-Step Verification", payload.error || "Could not regenerate backup codes.");
+        return;
+      }
+
+      setTwoFactorCode("");
+      if (Array.isArray(payload.backup_codes)) {
+        setTwoFactorBackupCodes(payload.backup_codes);
+        setBackupCodesRemaining(payload.backup_codes.length);
+      }
+      setStatus({ kind: "info", text: payload.message || "Backup codes regenerated." });
+    } catch (error) {
+      Alert.alert("Network error", String(error));
+    } finally {
+      setIsLoadingTwoFactor(false);
+    }
+  }
+
+  async function copyBackupCodes(): Promise<void> {
+    if (!twoFactorBackupCodes || twoFactorBackupCodes.length === 0) {
+      return;
+    }
+
+    await Clipboard.setStringAsync(twoFactorBackupCodes.join("\n"));
+    setStatus({ kind: "info", text: "Backup codes copied to clipboard." });
+  }
+
+  function dismissBackupCodes(): void {
+    setTwoFactorBackupCodes(null);
   }
 
   async function disableTwoFactor(): Promise<void> {
@@ -1089,6 +1142,8 @@ export default function App(): React.JSX.Element {
       setTwoFactorSetupKey(null);
       setTwoFactorSetupUri(null);
       setTwoFactorCode("");
+      setTwoFactorBackupCodes(null);
+      setBackupCodesRemaining(null);
       setStatus({ kind: "info", text: payload.message || "Two-step verification disabled." });
     } catch (error) {
       Alert.alert("Network error", String(error));
@@ -1099,7 +1154,7 @@ export default function App(): React.JSX.Element {
 
   async function verifyTwoFactorSignIn(): Promise<void> {
     if (!twoFactorChallengeToken || !twoFactorCode.trim()) {
-      Alert.alert("Validation", "Enter the 6-digit authenticator code.");
+      Alert.alert("Validation", "Enter your 6-digit authenticator code or a backup code.");
       return;
     }
 
@@ -1127,6 +1182,13 @@ export default function App(): React.JSX.Element {
       setTwoFactorChallengeToken(null);
       await saveAuthState(payload.token, payload.user as AuthUser);
       setAuthMode("login");
+      if (typeof payload.backup_codes_remaining === "number") {
+        setBackupCodesRemaining(payload.backup_codes_remaining);
+        Alert.alert(
+          "Backup Code Used",
+          `You signed in with a backup code. ${payload.backup_codes_remaining} backup code(s) remaining — regenerate them from Settings once you're back on your authenticator app.`
+        );
+      }
     } catch (error) {
       Alert.alert("Network error", String(error));
       setStatus({ kind: "error", text: "Network error during sign-in verification." });
@@ -2136,7 +2198,7 @@ export default function App(): React.JSX.Element {
                   label="Authenticator Code"
                   value={twoFactorCode}
                   onChange={setTwoFactorCode}
-                  placeholder="6-digit code"
+                  placeholder="6-digit code or backup code"
                 />
               ) : (
                 <>
@@ -3023,15 +3085,43 @@ export default function App(): React.JSX.Element {
 
                   {twoFactorEnabled && (
                     <>
+                      {!!twoFactorBackupCodes && (
+                        <>
+                          <Text style={styles.noteText}>
+                            Save these backup codes somewhere safe. Each one can be used once to sign in if you lose access to your
+                            authenticator app.
+                          </Text>
+                          <Text selectable style={styles.setupKeyText}>
+                            {twoFactorBackupCodes.join("\n")}
+                          </Text>
+                          <SmallAction label="Copy Codes" onPress={copyBackupCodes} />
+                          <SmallAction label="I've Saved These" onPress={dismissBackupCodes} />
+                        </>
+                      )}
+
                       <Text style={styles.noteText}>
                         Open your authenticator app to confirm sensitive account changes.
                       </Text>
+                      {backupCodesRemaining !== null && (
+                        <Text style={styles.noteText}>Backup codes remaining: {backupCodesRemaining}</Text>
+                      )}
                       <Field
                         label="Authenticator Code"
                         value={twoFactorCode}
                         onChange={setTwoFactorCode}
-                        placeholder="6-digit code"
+                        placeholder="6-digit code or backup code"
                       />
+                      <Pressable
+                        onPress={regenerateBackupCodes}
+                        style={[styles.primaryButton, isLoadingTwoFactor && styles.buttonDisabled]}
+                        disabled={isLoadingTwoFactor}
+                      >
+                        {isLoadingTwoFactor ? (
+                          <ActivityIndicator color={colors.accentText} />
+                        ) : (
+                          <Text style={styles.primaryButtonText}>Regenerate Backup Codes</Text>
+                        )}
+                      </Pressable>
                       <Pressable
                         onPress={disableTwoFactor}
                         style={[styles.primaryButton, isLoadingTwoFactor && styles.buttonDisabled]}
