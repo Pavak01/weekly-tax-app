@@ -145,9 +145,13 @@ const twoFactorCodeSchema = z.object({
   code: z.string().trim().regex(/^\d{6}$/)
 });
 
+const twoFactorCodeOrBackupSchema = z.object({
+  code: z.string().trim().regex(/^(\d{6}|[A-Z0-9]{5}-?[A-Z0-9]{5})$/i)
+});
+
 const twoFactorVerifySchema = z.object({
   challenge_token: z.string().min(20),
-  code: z.string().trim().regex(/^\d{6}$/)
+  code: z.string().trim().regex(/^(\d{6}|[A-Z0-9]{5}-?[A-Z0-9]{5})$/i)
 });
 
 const receiptUploadSchema = z.object({
@@ -341,6 +345,58 @@ function generatePasswordResetCode(): string {
 
 function hashPasswordResetCode(email: string, code: string): string {
   return crypto.createHash("sha256").update(`${email}:${code}:${jwtSecret}`).digest("hex");
+}
+
+const backupCodeAlphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+
+function generateBackupCode(): string {
+  const chars = Array.from({ length: 10 }, () => {
+    const index = crypto.randomInt(0, backupCodeAlphabet.length);
+    return backupCodeAlphabet[index];
+  });
+  return `${chars.slice(0, 5).join("")}-${chars.slice(5).join("")}`;
+}
+
+function generateBackupCodes(count: number): string[] {
+  return Array.from({ length: count }, () => generateBackupCode());
+}
+
+function normalizeBackupCode(code: string): string {
+  return code.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function hashBackupCode(userId: string, code: string): string {
+  return crypto.createHash("sha256").update(`${userId}:${normalizeBackupCode(code)}:${jwtSecret}`).digest("hex");
+}
+
+async function issueBackupCodes(userId: string): Promise<string[]> {
+  const codes = generateBackupCodes(10);
+
+  await db.query("DELETE FROM two_factor_backup_codes WHERE user_id = $1", [userId]);
+
+  for (const code of codes) {
+    await db.query(
+      "INSERT INTO two_factor_backup_codes (user_id, code_hash) VALUES ($1, $2)",
+      [userId, hashBackupCode(userId, code)]
+    );
+  }
+
+  return codes;
+}
+
+async function consumeBackupCode(userId: string, code: string): Promise<boolean> {
+  const codeHash = hashBackupCode(userId, code);
+  const result = await db.query(
+    `UPDATE two_factor_backup_codes
+     SET used_at = NOW()
+     WHERE user_id = $1
+       AND code_hash = $2
+       AND used_at IS NULL
+     RETURNING id`,
+    [userId, codeHash]
+  );
+
+  return (result.rowCount ?? 0) > 0;
 }
 
 function signTwoFactorChallengeToken(userId: string): string {
@@ -767,12 +823,36 @@ app.post("/auth/verify-2fa", authRateLimit, async (req: Request, res: Response) 
 
     const user = result.rows[0];
     const secret = decryptTwoFactorSecret(user.two_factor_secret);
-    if (!secret || !verifyTotpCode(secret, parsed.data.code)) {
-      return res.status(401).json({ error: "Invalid verification code" });
+    const submittedCode = parsed.data.code;
+    const isTotpFormat = /^\d{6}$/.test(submittedCode);
+
+    let backupCodeUsed = false;
+    if (isTotpFormat) {
+      if (!secret || !verifyTotpCode(secret, submittedCode)) {
+        return res.status(401).json({ error: "Invalid verification code" });
+      }
+    } else {
+      backupCodeUsed = await consumeBackupCode(user.id, submittedCode);
+      if (!backupCodeUsed) {
+        return res.status(401).json({ error: "Invalid verification code" });
+      }
     }
 
     const token = signToken(user.id, user.token_version);
-    return res.json({ token, user: { id: user.id, email: user.email, role: user.role ?? "user" } });
+    const response: Record<string, unknown> = {
+      token,
+      user: { id: user.id, email: user.email, role: user.role ?? "user" }
+    };
+
+    if (backupCodeUsed) {
+      const remaining = await db.query<{ count: string }>(
+        "SELECT COUNT(*)::text AS count FROM two_factor_backup_codes WHERE user_id = $1 AND used_at IS NULL",
+        [user.id]
+      );
+      response.backup_codes_remaining = Number(remaining.rows[0].count);
+    }
+
+    return res.json(response);
   } catch (error) {
     return sendError(res, 500, "Failed to verify two-step code", error);
   }
@@ -794,9 +874,20 @@ app.get("/auth/2fa/status", requireAuth, async (req: Request, res: Response) => 
       return res.status(404).json({ error: "User not found" });
     }
 
+    const enabled = Boolean(result.rows[0].two_factor_enabled);
+    let backupCodesRemaining: number | undefined;
+    if (enabled) {
+      const remaining = await db.query<{ count: string }>(
+        "SELECT COUNT(*)::text AS count FROM two_factor_backup_codes WHERE user_id = $1 AND used_at IS NULL",
+        [authReq.userId]
+      );
+      backupCodesRemaining = Number(remaining.rows[0].count);
+    }
+
     return res.json({
-      enabled: Boolean(result.rows[0].two_factor_enabled),
-      pending_setup: Boolean(result.rows[0].two_factor_pending_secret)
+      enabled,
+      pending_setup: Boolean(result.rows[0].two_factor_pending_secret),
+      backup_codes_remaining: backupCodesRemaining
     });
   } catch (error) {
     return sendError(res, 500, "Failed to load two-step status", error);
@@ -867,16 +958,57 @@ app.post("/auth/2fa/enable", requireAuth, authRateLimit, async (req: Request, re
       [encryptTwoFactorSecret(secret), authReq.userId]
     );
 
+    const backupCodes = await issueBackupCodes(authReq.userId);
     const token = signToken(authReq.userId, updated.rows[0].token_version);
-    return res.json({ message: "Two-step verification enabled.", token });
+    return res.json({
+      message: "Two-step verification enabled.",
+      token,
+      backup_codes: backupCodes
+    });
   } catch (error) {
     return sendError(res, 500, "Failed to enable two-step verification", error);
   }
 });
 
-app.post("/auth/2fa/disable", requireAuth, authRateLimit, async (req: Request, res: Response) => {
+app.post("/auth/2fa/backup-codes/regenerate", requireAuth, authRateLimit, async (req: Request, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const parsed = twoFactorCodeSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid payload", details: parsed.error.flatten() });
+  }
+
+  try {
+    const result = await db.query<{ two_factor_enabled: boolean | null; two_factor_secret: string | null }>(
+      `SELECT two_factor_enabled, two_factor_secret
+       FROM users
+       WHERE id = $1
+       LIMIT 1`,
+      [authReq.userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    if (!result.rows[0].two_factor_enabled) {
+      return res.status(400).json({ error: "Two-step verification is not enabled" });
+    }
+
+    const secret = decryptTwoFactorSecret(result.rows[0].two_factor_secret);
+    if (!secret || !verifyTotpCode(secret, parsed.data.code)) {
+      return res.status(400).json({ error: "Invalid verification code" });
+    }
+
+    const backupCodes = await issueBackupCodes(authReq.userId);
+    return res.json({ message: "Backup codes regenerated.", backup_codes: backupCodes });
+  } catch (error) {
+    return sendError(res, 500, "Failed to regenerate backup codes", error);
+  }
+});
+
+app.post("/auth/2fa/disable", requireAuth, authRateLimit, async (req: Request, res: Response) => {
+  const authReq = req as AuthenticatedRequest;
+  const parsed = twoFactorCodeOrBackupSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: "Invalid payload", details: parsed.error.flatten() });
   }
@@ -895,7 +1027,13 @@ app.post("/auth/2fa/disable", requireAuth, authRateLimit, async (req: Request, r
     }
 
     const secret = decryptTwoFactorSecret(result.rows[0].two_factor_secret);
-    if (!secret || !verifyTotpCode(secret, parsed.data.code)) {
+    const submittedCode = parsed.data.code;
+    const isTotpFormat = /^\d{6}$/.test(submittedCode);
+    const verified = isTotpFormat
+      ? Boolean(secret) && verifyTotpCode(secret as string, submittedCode)
+      : await consumeBackupCode(authReq.userId, submittedCode);
+
+    if (!verified) {
       return res.status(400).json({ error: "Invalid verification code" });
     }
 
@@ -910,6 +1048,8 @@ app.post("/auth/2fa/disable", requireAuth, authRateLimit, async (req: Request, r
        RETURNING token_version`,
       [authReq.userId]
     );
+
+    await db.query("DELETE FROM two_factor_backup_codes WHERE user_id = $1", [authReq.userId]);
 
     const token = signToken(authReq.userId, updated.rows[0].token_version);
     return res.json({ message: "Two-step verification disabled.", token });

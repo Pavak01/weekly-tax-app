@@ -22,7 +22,15 @@ async function ensureDatabaseCompatibility(): Promise<void> {
     "ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE IF EXISTS weekly_entries ADD COLUMN IF NOT EXISTS company_providing_services_for TEXT",
     "ALTER TABLE IF EXISTS weekly_entries ADD COLUMN IF NOT EXISTS entry_mode TEXT NOT NULL DEFAULT 'weekly'",
-    "ALTER TABLE IF EXISTS weekly_entries ADD COLUMN IF NOT EXISTS entry_date DATE"
+    "ALTER TABLE IF EXISTS weekly_entries ADD COLUMN IF NOT EXISTS entry_date DATE",
+    `CREATE TABLE IF NOT EXISTS two_factor_backup_codes (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id),
+      code_hash TEXT NOT NULL,
+      used_at TIMESTAMP,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    )`,
+    "CREATE INDEX IF NOT EXISTS idx_two_factor_backup_codes_user ON two_factor_backup_codes(user_id)"
   ];
 
   const backfillStatements = [
