@@ -1,16 +1,16 @@
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
-const bucket = process.env.RECEIPTS_S3_BUCKET ?? "";
-const region = process.env.RECEIPTS_S3_REGION ?? "auto";
-const endpoint = process.env.RECEIPTS_S3_ENDPOINT ?? "";
-const accessKeyId = process.env.RECEIPTS_S3_ACCESS_KEY_ID ?? "";
-const secretAccessKey = process.env.RECEIPTS_S3_SECRET_ACCESS_KEY ?? "";
+const bucket = process.env.AWS_S3_BUCKET_NAME ?? "";
+const region = process.env.AWS_DEFAULT_REGION ?? "auto";
+const endpoint = process.env.AWS_ENDPOINT_URL ?? "";
+const accessKeyId = process.env.AWS_ACCESS_KEY_ID ?? "";
+const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY ?? "";
 const forcePathStyle = String(process.env.RECEIPTS_S3_FORCE_PATH_STYLE ?? "").trim().toLowerCase() === "true";
 
 if (!bucket || !endpoint || !accessKeyId || !secretAccessKey) {
   throw new Error(
-    "RECEIPTS_S3_BUCKET, RECEIPTS_S3_ENDPOINT, RECEIPTS_S3_ACCESS_KEY_ID, and RECEIPTS_S3_SECRET_ACCESS_KEY are required"
+    "AWS_S3_BUCKET_NAME, AWS_ENDPOINT_URL, AWS_ACCESS_KEY_ID, and AWS_SECRET_ACCESS_KEY are required"
   );
 }
 
