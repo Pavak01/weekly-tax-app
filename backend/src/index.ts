@@ -2,18 +2,22 @@ import bcrypt from "bcryptjs";
 import cors from "cors";
 import express from "express";
 import type { NextFunction, Request, Response } from "express";
-import fs from "node:fs";
-import path from "node:path";
 import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
 import multer from "multer";
+import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
 import "dotenv/config";
-import { fileURLToPath } from "node:url";
 import { db } from "./db.js";
 import { getDeductionSuggestions } from "./deductionEngine.js";
 import { getRuleMonitoringSnapshot, getRulesForTaxYear, getTaxYearFromDate } from "./rulesEngine.js";
 import { calculateTaxEstimate, generateComplianceWarnings } from "./taxEngine.js";
+import {
+  deleteReceiptObjects,
+  getReceiptPresignedUrl,
+  receiptContentMatchesDeclaredType,
+  uploadReceiptObject
+} from "./receiptStorage.js";
 
 const app = express();
 const isProduction = process.env.NODE_ENV === "production";
@@ -65,9 +69,6 @@ const adminEmails = new Set(
     .map((email) => email.trim().toLowerCase())
     .filter(Boolean)
 );
-const currentFilePath = fileURLToPath(import.meta.url);
-const currentDir = path.dirname(currentFilePath);
-const uploadsDir = path.resolve(currentDir, "..", "uploads");
 const maxReceiptSizeBytes = 8 * 1024 * 1024;
 const receiptDownloadTtlSeconds = 15 * 60;
 const passwordResetTtlMinutes = Math.max(5, Number(process.env.PASSWORD_RESET_TTL_MINUTES || 15));
@@ -87,18 +88,8 @@ if (!jwtSecret) {
   throw new Error("JWT_SECRET is required");
 }
 
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-}
-
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: (_req, _file, cb) => cb(null, uploadsDir),
-    filename: (_req, file, cb) => {
-      const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
-      cb(null, `${Date.now()}-${safeName}`);
-    }
-  }),
+  storage: multer.memoryStorage(),
   limits: { fileSize: maxReceiptSizeBytes },
   fileFilter: (_req, file, cb) => {
     if (!allowedReceiptMimeTypes.has(file.mimetype)) {
@@ -307,36 +298,6 @@ function signReceiptDownloadToken(userId: string, receiptId: string): string {
 function getReceiptDownloadUrl(req: Request, userId: string, receiptId: string): string {
   const token = signReceiptDownloadToken(userId, receiptId);
   return `${req.protocol}://${req.get("host")}/receipts/${receiptId}/download?token=${encodeURIComponent(token)}`;
-}
-
-async function deleteReceiptFiles(storagePaths: string[]): Promise<void> {
-  const uniquePaths = Array.from(
-    new Set(
-      storagePaths
-        .map((value) => String(value ?? "").trim())
-        .filter((value) => value.length > 0)
-    )
-  );
-
-  await Promise.all(
-    uniquePaths.map(async (storagePath) => {
-      const fileName = path.basename(storagePath);
-      const filePath = path.resolve(uploadsDir, fileName);
-
-      if (!filePath.startsWith(uploadsDir + path.sep)) {
-        return;
-      }
-
-      try {
-        await fs.promises.unlink(filePath);
-      } catch (error) {
-        const fileError = error as NodeJS.ErrnoException;
-        if (fileError.code !== "ENOENT") {
-          console.warn(`Failed to delete receipt file ${filePath}: ${fileError.message}`);
-        }
-      }
-    })
-  );
 }
 
 function generatePasswordResetCode(): string {
@@ -1416,6 +1377,10 @@ app.post(
       return res.status(400).json({ error: "receipt file is required" });
     }
 
+    if (!receiptContentMatchesDeclaredType(req.file.buffer, req.file.mimetype)) {
+      return res.status(400).json({ error: "File content does not match its declared type" });
+    }
+
     try {
       const weekCheck = await db.query<{ id: string }>(
         "SELECT id FROM weekly_entries WHERE id = $1 AND user_id = $2 LIMIT 1",
@@ -1425,6 +1390,10 @@ app.post(
       if (weekCheck.rows.length === 0) {
         return res.status(404).json({ error: "Weekly entry not found" });
       }
+
+      const safeName = req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const storageKey = `receipts/${authReq.userId}/${uuidv4()}-${safeName}`;
+      await uploadReceiptObject(storageKey, req.file.buffer, req.file.mimetype);
 
       const inserted = await db.query<{
         id: string;
@@ -1444,7 +1413,7 @@ app.post(
           parsed.data.weekly_entry_id,
           authReq.userId,
           req.file.originalname,
-          `/uploads/${path.basename(req.file.path)}`,
+          storageKey,
           req.file.mimetype,
           req.file.size
         ]
@@ -1521,7 +1490,11 @@ app.get("/receipts/:receiptId/download", requireAuth, async (req: Request, res: 
     if (payload.purpose !== "receipt-download" || payload.sub !== authReq.userId || payload.rid !== receiptId) {
       return res.status(401).json({ error: "Invalid download token" });
     }
+  } catch {
+    return res.status(401).json({ error: "Invalid or expired download token" });
+  }
 
+  try {
     const result = await db.query<{ original_filename: string; storage_path: string }>(
       "SELECT original_filename, storage_path FROM receipts WHERE id = $1 AND user_id = $2 LIMIT 1",
       [receiptId, authReq.userId]
@@ -1532,16 +1505,10 @@ app.get("/receipts/:receiptId/download", requireAuth, async (req: Request, res: 
     }
 
     const receipt = result.rows[0];
-    const fileName = path.basename(receipt.storage_path);
-    const filePath = path.resolve(uploadsDir, fileName);
-
-    if (!filePath.startsWith(uploadsDir + path.sep) || !fs.existsSync(filePath)) {
-      return res.status(404).json({ error: "Receipt file not found" });
-    }
-
-    return res.download(filePath, receipt.original_filename);
-  } catch {
-    return res.status(401).json({ error: "Invalid or expired download token" });
+    const presignedUrl = await getReceiptPresignedUrl(receipt.storage_path, receipt.original_filename);
+    return res.redirect(302, presignedUrl);
+  } catch (error) {
+    return sendError(res, 500, "Failed to load receipt", error);
   }
 });
 
@@ -2396,7 +2363,7 @@ app.delete("/weekly-entry/:weekStartDate", requireAuth, async (req: Request, res
     }
 
     await client.query("COMMIT");
-    await deleteReceiptFiles(receiptStoragePaths);
+    await deleteReceiptObjects(receiptStoragePaths);
     return res.status(204).send();
   } catch (error) {
     await client.query("ROLLBACK");
@@ -2444,7 +2411,7 @@ app.delete("/all-entries", requireAuth, async (req: Request, res: Response) => {
     await client.query("DELETE FROM tax_summaries WHERE user_id = $1", [authReq.userId]);
 
     await client.query("COMMIT");
-    await deleteReceiptFiles(receiptStoragePaths);
+    await deleteReceiptObjects(receiptStoragePaths);
     return res.status(204).send();
   } catch (error) {
     await client.query("ROLLBACK");
