@@ -399,6 +399,34 @@ async function consumeBackupCode(userId: string, code: string): Promise<boolean>
   return (result.rowCount ?? 0) > 0;
 }
 
+function getClientIp(req: Request): string {
+  return req.ip || req.socket.remoteAddress || "unknown";
+}
+
+async function logSecurityEvent(params: {
+  userId?: string | null;
+  email?: string | null;
+  eventType: string;
+  payload?: Record<string, unknown>;
+  ip?: string;
+}): Promise<void> {
+  try {
+    await db.query(
+      `INSERT INTO security_audit_log (user_id, email, event_type, event_payload, ip_address)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [
+        params.userId ?? null,
+        params.email ?? null,
+        params.eventType,
+        JSON.stringify(params.payload ?? {}),
+        params.ip ?? null
+      ]
+    );
+  } catch (error) {
+    console.error("Failed to record security audit event", error);
+  }
+}
+
 function signTwoFactorChallengeToken(userId: string): string {
   return jwt.sign({ sub: userId, purpose: "two-factor-login" }, jwtSecret, {
     expiresIn: `${twoFactorChallengeTtlMinutes}m`
@@ -636,6 +664,12 @@ app.post("/auth/register", authRateLimit, async (req: Request, res: Response) =>
 
     const user = inserted.rows[0];
     const token = signToken(user.id, user.token_version);
+    await logSecurityEvent({
+      userId: user.id,
+      email: user.email,
+      eventType: "register",
+      ip: getClientIp(req)
+    });
     return res.status(201).json({ token, user: { id: user.id, email: user.email, role: user.role } });
   } catch (error) {
     return sendError(res, 500, "Failed to register", error);
@@ -668,17 +702,26 @@ app.post("/auth/login", authRateLimit, async (req: Request, res: Response) => {
     );
 
     if (result.rows.length === 0 || !result.rows[0].password_hash) {
+      await logSecurityEvent({ email, eventType: "login_failure", payload: { reason: "invalid_credentials" }, ip: getClientIp(req) });
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
     const user = result.rows[0];
     const passwordHash = user.password_hash;
     if (!passwordHash) {
+      await logSecurityEvent({ email, eventType: "login_failure", payload: { reason: "invalid_credentials" }, ip: getClientIp(req) });
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
     const ok = await bcrypt.compare(parsed.data.password, passwordHash);
     if (!ok) {
+      await logSecurityEvent({
+        userId: user.id,
+        email: user.email,
+        eventType: "login_failure",
+        payload: { reason: "invalid_credentials" },
+        ip: getClientIp(req)
+      });
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
@@ -693,6 +736,7 @@ app.post("/auth/login", authRateLimit, async (req: Request, res: Response) => {
     }
 
     const token = signToken(user.id, user.token_version);
+    await logSecurityEvent({ userId: user.id, email: user.email, eventType: "login_success", ip: getClientIp(req) });
     return res.json({ token, user: { id: user.id, email: user.email, role: user.role ?? "user" } });
   } catch (error) {
     return sendError(res, 500, "Failed to login", error);
@@ -829,11 +873,25 @@ app.post("/auth/verify-2fa", authRateLimit, async (req: Request, res: Response) 
     let backupCodeUsed = false;
     if (isTotpFormat) {
       if (!secret || !verifyTotpCode(secret, submittedCode)) {
+        await logSecurityEvent({
+          userId: user.id,
+          email: user.email,
+          eventType: "login_failure",
+          payload: { reason: "invalid_2fa_code" },
+          ip: getClientIp(req)
+        });
         return res.status(401).json({ error: "Invalid verification code" });
       }
     } else {
       backupCodeUsed = await consumeBackupCode(user.id, submittedCode);
       if (!backupCodeUsed) {
+        await logSecurityEvent({
+          userId: user.id,
+          email: user.email,
+          eventType: "login_failure",
+          payload: { reason: "invalid_backup_code" },
+          ip: getClientIp(req)
+        });
         return res.status(401).json({ error: "Invalid verification code" });
       }
     }
@@ -851,6 +909,14 @@ app.post("/auth/verify-2fa", authRateLimit, async (req: Request, res: Response) 
       );
       response.backup_codes_remaining = Number(remaining.rows[0].count);
     }
+
+    await logSecurityEvent({
+      userId: user.id,
+      email: user.email,
+      eventType: "login_success",
+      payload: { via: backupCodeUsed ? "backup_code" : "totp" },
+      ip: getClientIp(req)
+    });
 
     return res.json(response);
   } catch (error) {
@@ -1542,6 +1608,46 @@ app.get("/admin/rules/:taxYear/audit-events", requireAuth, requireAdmin, adminRa
   }
 });
 
+app.get("/admin/security-events", requireAuth, requireAdmin, adminRateLimit, async (req: Request, res: Response) => {
+  const limitRaw = Number(req.query.limit ?? 50);
+  const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(200, Math.floor(limitRaw))) : 50;
+  const eventType = typeof req.query.event_type === "string" ? req.query.event_type.trim() : "";
+
+  try {
+    const conditions: string[] = [];
+    const values: unknown[] = [];
+
+    if (eventType) {
+      values.push(eventType);
+      conditions.push(`event_type = $${values.length}`);
+    }
+
+    values.push(limit);
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    const events = await db.query<{
+      id: string;
+      user_id: string | null;
+      email: string | null;
+      event_type: string;
+      event_payload: unknown;
+      ip_address: string | null;
+      created_at: string;
+    }>(
+      `SELECT id, user_id, email, event_type, event_payload, ip_address, created_at::text
+       FROM security_audit_log
+       ${whereClause}
+       ORDER BY created_at DESC
+       LIMIT $${values.length}`,
+      values
+    );
+
+    return res.json({ events: events.rows });
+  } catch (error) {
+    return sendError(res, 500, "Failed to load security events", error);
+  }
+});
+
 app.post("/admin/users/role", requireAuth, requireAdmin, adminRateLimit, async (req: Request, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const parsed = adminRoleUpdateSchema.safeParse(req.body);
@@ -1562,6 +1668,15 @@ app.post("/admin/users/role", requireAuth, requireAdmin, adminRateLimit, async (
       return res.status(400).json({ error: "You cannot revoke your own admin access" });
     }
 
+    const before = await db.query<{ id: string; role: string }>(
+      "SELECT id, role FROM users WHERE email = $1 LIMIT 1",
+      [targetEmail]
+    );
+
+    if (before.rows.length === 0) {
+      return res.status(404).json({ error: "Target user not found" });
+    }
+
     const updated = await db.query<{ id: string; email: string; role: string }>(
       `UPDATE users
        SET role = $1
@@ -1570,9 +1685,18 @@ app.post("/admin/users/role", requireAuth, requireAdmin, adminRateLimit, async (
       [targetRole, targetEmail]
     );
 
-    if (updated.rows.length === 0) {
-      return res.status(404).json({ error: "Target user not found" });
-    }
+    await logSecurityEvent({
+      userId: authReq.userId,
+      email: actor.rows[0].email,
+      eventType: "admin_role_change",
+      payload: {
+        target_email: targetEmail,
+        target_user_id: before.rows[0].id,
+        previous_role: before.rows[0].role,
+        new_role: targetRole
+      },
+      ip: getClientIp(req)
+    });
 
     return res.json({
       message: "User role updated",

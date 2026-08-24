@@ -30,7 +30,18 @@ async function ensureDatabaseCompatibility(): Promise<void> {
       used_at TIMESTAMP,
       created_at TIMESTAMP NOT NULL DEFAULT NOW()
     )`,
-    "CREATE INDEX IF NOT EXISTS idx_two_factor_backup_codes_user ON two_factor_backup_codes(user_id)"
+    "CREATE INDEX IF NOT EXISTS idx_two_factor_backup_codes_user ON two_factor_backup_codes(user_id)",
+    `CREATE TABLE IF NOT EXISTS security_audit_log (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID REFERENCES users(id),
+      email TEXT,
+      event_type TEXT NOT NULL,
+      event_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ip_address TEXT,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    )`,
+    "CREATE INDEX IF NOT EXISTS idx_security_audit_log_created ON security_audit_log(created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_security_audit_log_user ON security_audit_log(user_id, created_at DESC)"
   ];
 
   const backfillStatements = [
