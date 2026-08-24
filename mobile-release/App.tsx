@@ -1048,6 +1048,9 @@ export default function App(): React.JSX.Element {
         return;
       }
 
+      if (payload.token && authUser) {
+        await saveAuthState(payload.token, authUser);
+      }
       setTwoFactorEnabled(true);
       setTwoFactorSetupKey(null);
       setTwoFactorSetupUri(null);
@@ -1079,6 +1082,9 @@ export default function App(): React.JSX.Element {
         return;
       }
 
+      if (payload.token && authUser) {
+        await saveAuthState(payload.token, authUser);
+      }
       setTwoFactorEnabled(false);
       setTwoFactorSetupKey(null);
       setTwoFactorSetupUri(null);

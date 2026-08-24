@@ -290,8 +290,8 @@ function getMonthStartFromIsoDate(value: string): string {
   return date.toISOString().slice(0, 10);
 }
 
-function signToken(userId: string): string {
-  return jwt.sign({ sub: userId }, jwtSecret, { expiresIn: "7d" });
+function signToken(userId: string, tokenVersion: number): string {
+  return jwt.sign({ sub: userId, ver: tokenVersion }, jwtSecret, { expiresIn: "7d" });
 }
 
 function signReceiptDownloadToken(userId: string, receiptId: string): string {
@@ -475,7 +475,7 @@ function buildTwoFactorSetup(email: string, secret: string): { manual_entry_key:
   };
 }
 
-function requireAuth(req: Request, res: Response, next: NextFunction): void {
+async function requireAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
   const header = req.headers.authorization;
   if (!header || !header.startsWith("Bearer ")) {
     res.status(401).json({ error: "Missing bearer token" });
@@ -484,6 +484,8 @@ function requireAuth(req: Request, res: Response, next: NextFunction): void {
 
   const token = header.slice("Bearer ".length).trim();
 
+  let sub: string;
+  let tokenVersion: number;
   try {
     const decoded = jwt.verify(token, jwtSecret);
     if (typeof decoded !== "object" || decoded === null || !("sub" in decoded)) {
@@ -491,16 +493,35 @@ function requireAuth(req: Request, res: Response, next: NextFunction): void {
       return;
     }
 
-    const sub = (decoded as jwt.JwtPayload).sub;
-    if (typeof sub !== "string") {
+    const decodedSub = (decoded as jwt.JwtPayload).sub;
+    if (typeof decodedSub !== "string") {
       res.status(401).json({ error: "Invalid token subject" });
+      return;
+    }
+
+    sub = decodedSub;
+    const decodedVer = (decoded as jwt.JwtPayload & { ver?: unknown }).ver;
+    tokenVersion = typeof decodedVer === "number" ? decodedVer : 0;
+  } catch {
+    res.status(401).json({ error: "Invalid or expired token" });
+    return;
+  }
+
+  try {
+    const result = await db.query<{ token_version: number }>(
+      "SELECT token_version FROM users WHERE id = $1 LIMIT 1",
+      [sub]
+    );
+
+    if (result.rows.length === 0 || result.rows[0].token_version !== tokenVersion) {
+      res.status(401).json({ error: "Session has been revoked, please sign in again" });
       return;
     }
 
     (req as AuthenticatedRequest).userId = sub;
     next();
-  } catch {
-    res.status(401).json({ error: "Invalid or expired token" });
+  } catch (error) {
+    sendError(res, 500, "Failed to validate session", error);
   }
 }
 
@@ -550,16 +571,16 @@ app.post("/auth/register", authRateLimit, async (req: Request, res: Response) =>
       return res.status(409).json({ error: "Email already registered" });
     }
 
-    const inserted = await db.query<{ id: string; email: string; role: string }>(
+    const inserted = await db.query<{ id: string; email: string; role: string; token_version: number }>(
       `INSERT INTO users (email, password_hash, role, created_at)
        VALUES ($1, $2, $3, NOW())
-       RETURNING id, email, role`,
+       RETURNING id, email, role, token_version`,
       [email, passwordHash, role]
     );
 
     const user = inserted.rows[0];
-    const token = signToken(user.id);
-    return res.status(201).json({ token, user });
+    const token = signToken(user.id, user.token_version);
+    return res.status(201).json({ token, user: { id: user.id, email: user.email, role: user.role } });
   } catch (error) {
     return sendError(res, 500, "Failed to register", error);
   }
@@ -581,8 +602,9 @@ app.post("/auth/login", authRateLimit, async (req: Request, res: Response) => {
       password_hash: string | null;
       two_factor_enabled: boolean | null;
       two_factor_secret: string | null;
+      token_version: number;
     }>(
-      `SELECT id, email, role, password_hash, two_factor_enabled, two_factor_secret
+      `SELECT id, email, role, password_hash, two_factor_enabled, two_factor_secret, token_version
        FROM users
        WHERE email = $1
        LIMIT 1`,
@@ -614,7 +636,7 @@ app.post("/auth/login", authRateLimit, async (req: Request, res: Response) => {
       });
     }
 
-    const token = signToken(user.id);
+    const token = signToken(user.id, user.token_version);
     return res.json({ token, user: { id: user.id, email: user.email, role: user.role ?? "user" } });
   } catch (error) {
     return sendError(res, 500, "Failed to login", error);
@@ -671,17 +693,18 @@ app.post("/auth/reset-password", authRateLimit, async (req: Request, res: Respon
   const newPasswordHash = await bcrypt.hash(parsed.data.new_password, 12);
 
   try {
-    const updated = await db.query<{ id: string; email: string; role: string | null }>(
+    const updated = await db.query<{ id: string; email: string; role: string | null; token_version: number }>(
       `UPDATE users
        SET password_hash = $1,
            password_reset_code_hash = NULL,
            password_reset_expires_at = NULL,
-           password_reset_requested_at = NULL
+           password_reset_requested_at = NULL,
+           token_version = token_version + 1
        WHERE email = $2
          AND password_reset_code_hash = $3
          AND password_reset_expires_at IS NOT NULL
          AND password_reset_expires_at > NOW()
-       RETURNING id, email, role`,
+       RETURNING id, email, role, token_version`,
       [newPasswordHash, email, codeHash]
     );
 
@@ -690,7 +713,7 @@ app.post("/auth/reset-password", authRateLimit, async (req: Request, res: Respon
     }
 
     const user = updated.rows[0];
-    const token = signToken(user.id);
+    const token = signToken(user.id, user.token_version);
     return res.json({
       message: "Password updated successfully.",
       token,
@@ -724,8 +747,14 @@ app.post("/auth/verify-2fa", authRateLimit, async (req: Request, res: Response) 
   }
 
   try {
-    const result = await db.query<{ id: string; email: string; role: string | null; two_factor_secret: string | null }>(
-      `SELECT id, email, role, two_factor_secret
+    const result = await db.query<{
+      id: string;
+      email: string;
+      role: string | null;
+      two_factor_secret: string | null;
+      token_version: number;
+    }>(
+      `SELECT id, email, role, two_factor_secret, token_version
        FROM users
        WHERE id = $1
        LIMIT 1`,
@@ -742,7 +771,7 @@ app.post("/auth/verify-2fa", authRateLimit, async (req: Request, res: Response) 
       return res.status(401).json({ error: "Invalid verification code" });
     }
 
-    const token = signToken(user.id);
+    const token = signToken(user.id, user.token_version);
     return res.json({ token, user: { id: user.id, email: user.email, role: user.role ?? "user" } });
   } catch (error) {
     return sendError(res, 500, "Failed to verify two-step code", error);
@@ -826,17 +855,20 @@ app.post("/auth/2fa/enable", requireAuth, authRateLimit, async (req: Request, re
       return res.status(400).json({ error: "Invalid verification code" });
     }
 
-    await db.query(
+    const updated = await db.query<{ token_version: number }>(
       `UPDATE users
        SET two_factor_enabled = TRUE,
            two_factor_secret = $1,
            two_factor_pending_secret = NULL,
-           two_factor_enabled_at = NOW()
-       WHERE id = $2`,
+           two_factor_enabled_at = NOW(),
+           token_version = token_version + 1
+       WHERE id = $2
+       RETURNING token_version`,
       [encryptTwoFactorSecret(secret), authReq.userId]
     );
 
-    return res.json({ message: "Two-step verification enabled." });
+    const token = signToken(authReq.userId, updated.rows[0].token_version);
+    return res.json({ message: "Two-step verification enabled.", token });
   } catch (error) {
     return sendError(res, 500, "Failed to enable two-step verification", error);
   }
@@ -867,17 +899,20 @@ app.post("/auth/2fa/disable", requireAuth, authRateLimit, async (req: Request, r
       return res.status(400).json({ error: "Invalid verification code" });
     }
 
-    await db.query(
+    const updated = await db.query<{ token_version: number }>(
       `UPDATE users
        SET two_factor_enabled = FALSE,
            two_factor_secret = NULL,
            two_factor_pending_secret = NULL,
-           two_factor_enabled_at = NULL
-       WHERE id = $1`,
+           two_factor_enabled_at = NULL,
+           token_version = token_version + 1
+       WHERE id = $1
+       RETURNING token_version`,
       [authReq.userId]
     );
 
-    return res.json({ message: "Two-step verification disabled." });
+    const token = signToken(authReq.userId, updated.rows[0].token_version);
+    return res.json({ message: "Two-step verification disabled.", token });
   } catch (error) {
     return sendError(res, 500, "Failed to disable two-step verification", error);
   }

@@ -19,6 +19,7 @@ async function ensureDatabaseCompatibility(): Promise<void> {
     "ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS two_factor_secret TEXT",
     "ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS two_factor_pending_secret TEXT",
     "ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS two_factor_enabled_at TIMESTAMP",
+    "ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE IF EXISTS weekly_entries ADD COLUMN IF NOT EXISTS company_providing_services_for TEXT",
     "ALTER TABLE IF EXISTS weekly_entries ADD COLUMN IF NOT EXISTS entry_mode TEXT NOT NULL DEFAULT 'weekly'",
     "ALTER TABLE IF EXISTS weekly_entries ADD COLUMN IF NOT EXISTS entry_date DATE"
