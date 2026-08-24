@@ -12,7 +12,7 @@
     "validate:release:preview": "node ./scripts/validate-release-config.js preview",
     "validate:release:production": "node ./scripts/validate-release-config.js production",
     "build:android:preview": "npm run validate:release:preview && eas build --platform android --profile preview",
-    "build:android:production": "npm run validate:release:production && eas build --platform android --profile production",
+    "build:android:production": "bash ../ops/scripts/validate-build-baseline.sh && npm run validate:release:production && eas build --platform android --profile production",
     "build:ios:preview": "npm run validate:release:preview && eas build --platform ios --profile preview",
     "build:ios:production": "npm run validate:release:production && eas build --platform ios --profile production"
   },
