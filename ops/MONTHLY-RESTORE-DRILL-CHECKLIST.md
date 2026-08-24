@@ -6,6 +6,8 @@
   - ./ops/scripts/start-restore-drill.sh
 - Auto-generate a drill record with a specific backup folder:
   - ./ops/scripts/start-restore-drill.sh ops/backups/20260520T102324Z
+- Run a combined backup verification (current source + latest archived backup):
+  - ./ops/scripts/verify-backups.sh
 - Run the automated drill workflow from GitHub Actions:
   - Monthly Restore Drill (workflow_dispatch)
 
