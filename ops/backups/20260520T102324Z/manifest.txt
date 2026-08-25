@@ -1,0 +1,5 @@
+backup_timestamp_utc=20260520T102324Z
+backup_commit=a032c8a58bb182854aec9695602e4fb102ac8873
+backup_branch=main
+repo=income app
+created_by=copilot

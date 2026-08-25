@@ -3098,7 +3098,7 @@ export default function App(): React.JSX.Element {
                   <Pressable onPress={() => void Linking.openURL("https://raw.githubusercontent.com/Pavak01/weekly-tax-app/main/PRIVACY-POLICY.md")}>
                     <Text style={styles.linkText}>Privacy Policy</Text>
                   </Pressable>
-                  <Pressable onPress={() => void Linking.openURL("https://raw.githubusercontent.com/Pavak01/weekly-tax-app/main/ACCOUNT-DELETION.html")}>
+                  <Pressable onPress={() => void Linking.openURL("https://raw.githubusercontent.com/Pavak01/weekly-tax-app/main/ACCOUNT-DELETION-REQUEST.html")}>
                     <Text style={styles.linkText}>Request Account Deletion</Text>
                   </Pressable>
                 </FormSection>

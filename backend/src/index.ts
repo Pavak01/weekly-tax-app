@@ -1104,6 +1104,36 @@ app.get("/auth/me", requireAuth, async (req: Request, res: Response) => {
   }
 });
 
+app.post("/auth/account-deletion-request", authRateLimit, async (req: Request, res: Response) => {
+  try {
+    const { email, fullName, message } = req.body;
+
+    if (!email || !fullName) {
+      return res.status(400).json({ error: "Email and full name are required." });
+    }
+
+    if (typeof email !== "string" || typeof fullName !== "string") {
+      return res.status(400).json({ error: "Invalid input format." });
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ error: "Invalid email address." });
+    }
+
+    const ip = getClientIp(req);
+    await logSecurityEvent("account_deletion_request", {
+      email,
+      fullName,
+      message: message || null,
+      submittedAt: new Date().toISOString()
+    }, email, ip);
+
+    return res.status(200).json({ success: true, message: "Deletion request received." });
+  } catch (error) {
+    return sendError(res, 500, "Failed to process deletion request", error);
+  }
+});
+
 app.get("/entry-mode-lock/:weekStartDate", requireAuth, async (req: Request, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const weekStartDate = String(req.params.weekStartDate ?? "").trim();
