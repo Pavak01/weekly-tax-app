@@ -771,50 +771,6 @@ export default function App(): React.JSX.Element {
     setEntryDate(getTodayDisplayDate());
   }
 
-  function goToPreviousWeek(): void {
-    if (entryMode === "monthly") {
-      setEntryDate((current) => addMonthsToDisplayDate(current, -1));
-      return;
-    }
-
-    if (entryMode === "daily") {
-      setEntryDate((current) => addDaysToDisplayDate(current, -1));
-      return;
-    }
-
-    setWeekStartDate((current) => addDaysToDisplayDate(current, -7));
-  }
-
-  function goToNextWeek(): void {
-    if (entryMode === "monthly") {
-      const nextEntryDate = addMonthsToDisplayDate(entryDate, 1);
-      const nextEntryDateIso = parseDisplayDateToIso(nextEntryDate);
-
-      if (nextEntryDateIso && nextEntryDateIso <= getTodayIsoDate()) {
-        setEntryDate(nextEntryDate);
-      }
-      return;
-    }
-
-    if (entryMode === "daily") {
-      const nextEntryDate = addDaysToDisplayDate(entryDate, 1);
-      const nextEntryDateIso = parseDisplayDateToIso(nextEntryDate);
-
-      if (nextEntryDateIso && nextEntryDateIso <= getTodayIsoDate()) {
-        setEntryDate(nextEntryDate);
-      }
-      return;
-    }
-
-    const nextWeekStartDate = addDaysToDisplayDate(weekStartDate, 7);
-    const nextWeekStartDateIso = parseDisplayDateToIso(nextWeekStartDate);
-    const currentWeekStartDateIso = parseDisplayDateToIso(getCurrentMondayDisplayDate());
-
-    if (nextWeekStartDateIso && currentWeekStartDateIso && nextWeekStartDateIso <= currentWeekStartDateIso) {
-      setWeekStartDate(nextWeekStartDate);
-    }
-  }
-
   function handleEntryDateChange(value: string): void {
     const normalized = normalizeDateInput(value);
     const isoDate = parseDisplayDateToIso(normalized);
@@ -2399,17 +2355,6 @@ export default function App(): React.JSX.Element {
                     </Text>
                   )}
                   <View style={styles.quickActionsRow}>
-                    <SmallAction
-                      label={entryMode === "monthly" ? "Previous Month" : entryMode === "daily" ? "Previous Day" : "Previous Week"}
-                      onPress={goToPreviousWeek}
-                    />
-                    <SmallAction
-                      label={entryMode === "monthly" ? "Next Month" : entryMode === "daily" ? "Next Day" : "Next Week"}
-                      onPress={goToNextWeek}
-                      disabled={!canGoToNextWeek}
-                    />
-                  </View>
-                  <View style={styles.quickActionsRow}>
                     {entryMode === "monthly" ? (
                       <SmallAction label="Use This Month" onPress={setThisMonth} />
                     ) : entryMode === "daily" ? (
@@ -2524,7 +2469,7 @@ export default function App(): React.JSX.Element {
 
                   <Pressable
                     onPress={confirmWeeklyEntrySubmission}
-                    style={[styles.primaryButton, isSavingWeek && styles.buttonDisabled]}
+                    style={({ pressed }) => [styles.primaryButton, isSavingWeek && styles.buttonDisabled, pressed && !isSavingWeek && styles.primaryButtonPressed]}
                     disabled={isSavingWeek}
                   >
                     {isSavingWeek ? (
@@ -2638,7 +2583,7 @@ export default function App(): React.JSX.Element {
                   <Text style={styles.noteText}>This shows your year-to-date position up to the selected date.</Text>
                   <Pressable
                     onPress={fetchSummary}
-                    style={[styles.primaryButton, isLoadingSummary && styles.buttonDisabled]}
+                    style={({ pressed }) => [styles.primaryButton, isLoadingSummary && styles.buttonDisabled, pressed && !isLoadingSummary && styles.primaryButtonPressed]}
                     disabled={isLoadingSummary}
                   >
                     {isLoadingSummary ? (
@@ -2699,7 +2644,11 @@ export default function App(): React.JSX.Element {
                   )}
 
                   {!summary && !isLoadingSummary && (
-                    <Text style={styles.noteText}>No year snapshot loaded yet. Choose a date and tap load.</Text>
+                    <View style={styles.emptyState}>
+                      <Text style={styles.emptyStateEmoji}>📊</Text>
+                      <Text style={styles.emptyStateTitle}>No snapshot yet</Text>
+                      <Text style={styles.emptyStateText}>Choose a tax year and date, then tap "Load Year Snapshot" to view your tax position.</Text>
+                    </View>
                   )}
                 </FormSection>
               )}
@@ -2710,7 +2659,7 @@ export default function App(): React.JSX.Element {
                   <Text style={styles.noteText}>Review every saved entry with attached receipts and ready-to-open files.</Text>
                   <Pressable
                     onPress={fetchAuditTrail}
-                    style={[styles.primaryButton, isLoadingAudit && styles.buttonDisabled]}
+                    style={({ pressed }) => [styles.primaryButton, isLoadingAudit && styles.buttonDisabled, pressed && !isLoadingAudit && styles.primaryButtonPressed]}
                     disabled={isLoadingAudit}
                   >
                     {isLoadingAudit ? (
@@ -2734,8 +2683,12 @@ export default function App(): React.JSX.Element {
                   />
                   <Text style={styles.noteText}>Showing {filteredAuditEntries.length} entries for the active filters.</Text>
 
-                  {!isLoadingAudit && filteredAuditEntries.length === 0 && (
-                    <Text style={styles.noteText}>No audit entries loaded yet.</Text>
+                  {!isLoadingAudit && filteredAuditEntries.length === 0 && auditEntries.length === 0 && (
+                    <View style={styles.emptyState}>
+                      <Text style={styles.emptyStateEmoji}>📋</Text>
+                      <Text style={styles.emptyStateTitle}>No entries yet</Text>
+                      <Text style={styles.emptyStateText}>Load your audit trail to review all saved entries with their receipts.</Text>
+                    </View>
                   )}
 
                   {groupedAuditEntries.map((group) => (
@@ -2798,7 +2751,7 @@ export default function App(): React.JSX.Element {
                     onPress={() => {
                       void fetchExport("download");
                     }}
-                    style={[styles.primaryButton, isLoadingExport && styles.buttonDisabled]}
+                    style={({ pressed }) => [styles.primaryButton, isLoadingExport && styles.buttonDisabled, pressed && !isLoadingExport && styles.primaryButtonPressed]}
                     disabled={isLoadingExport}
                   >
                     {isLoadingExport ? (
@@ -2817,7 +2770,11 @@ export default function App(): React.JSX.Element {
                   </View>
                   <TextInput multiline editable={false} style={styles.exportBox} value={exportData} />
                   {!exportData && !isLoadingExport && (
-                    <Text style={styles.noteText}>Choose download or email/share. Your CSV preview will appear here.</Text>
+                    <View style={styles.emptyState}>
+                      <Text style={styles.emptyStateEmoji}>📥</Text>
+                      <Text style={styles.emptyStateTitle}>No export yet</Text>
+                      <Text style={styles.emptyStateText}>Download a CSV file or email it to yourself for record-keeping and tax filing.</Text>
+                    </View>
                   )}
                 </FormSection>
               )}
@@ -3366,8 +3323,12 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     alignItems: "center"
   },
+  primaryButtonPressed: {
+    opacity: 0.85,
+    backgroundColor: colors.accentDarker || colors.accent
+  },
   buttonDisabled: {
-    opacity: 0.7
+    opacity: 0.5
   },
   primaryButtonText: {
     color: colors.accentText,
@@ -3484,5 +3445,31 @@ const styles = StyleSheet.create({
     backgroundColor: colors.inputBg,
     padding: 10,
     textAlignVertical: "top"
+  },
+  emptyState: {
+    marginTop: spacing.md,
+    paddingVertical: spacing.lg,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.accentSoftAlt,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    alignItems: "center",
+    gap: spacing.sm
+  },
+  emptyStateEmoji: {
+    fontSize: 48,
+    marginBottom: spacing.xs
+  },
+  emptyStateTitle: {
+    fontSize: typography.body,
+    fontWeight: "700",
+    color: colors.textMain
+  },
+  emptyStateText: {
+    fontSize: typography.small,
+    color: colors.textSecondary,
+    textAlign: "center",
+    lineHeight: 18
   }
 });
