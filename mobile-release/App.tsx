@@ -12,6 +12,7 @@ import {
   Animated,
   Easing,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   SafeAreaView,
@@ -3092,6 +3093,11 @@ export default function App(): React.JSX.Element {
                       </Pressable>
                     </>
                   )}
+
+                  <Text style={styles.subSection}>Privacy & Legal</Text>
+                  <Pressable onPress={() => void Linking.openURL("https://raw.githubusercontent.com/Pavak01/weekly-tax-app/main/PRIVACY-POLICY.md")}>
+                    <Text style={styles.linkText}>Privacy Policy</Text>
+                  </Pressable>
                 </FormSection>
               )}
 
@@ -3183,6 +3189,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "700",
     color: colors.sectionHint
+  },
+  linkText: {
+    fontSize: typography.body,
+    color: colors.accent,
+    fontWeight: "600",
+    marginTop: spacing.sm,
+    marginBottom: spacing.sm
   },
   label: {
     fontSize: typography.body,
