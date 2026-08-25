@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Last updated: 27 May 2026
+Last updated: 25 August 2026
 
 This Privacy Policy explains how Weekly Tax App collects, uses, stores, and protects your information when you use the mobile app and backend API.
 
@@ -115,10 +115,16 @@ We may disclose data if required by law or valid legal process.
 ## 7. Security measures
 
 We apply technical controls including:
-- Password hashing
-- Encrypted two-step secrets
-- Authenticated API access
-- Signed, time-limited receipt download tokens
+- Password hashing (bcrypt)
+- Encrypted two-step verification secrets
+- Two-factor backup recovery codes (SHA-256 hashed, single-use)
+- Token versioning for session revocation (invalidates tokens on password/2FA changes)
+- Authenticated API access (Bearer tokens)
+- Signed, time-limited receipt download tokens (5-minute expiry)
+- Receipt content validation via magic-byte inspection (prevents malicious file uploads)
+- Audit logging of sign-in attempts, password changes, and admin actions
+- Point-in-Time Recovery (PITR) for database backups (4-week recovery window)
+- Daily automated database backups
 - Upload restrictions (file type/size limits)
 - Basic endpoint rate limiting
 

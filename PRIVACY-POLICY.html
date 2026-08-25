@@ -84,7 +84,7 @@
 		<main>
 			<section class="card">
 				<h1>Privacy Policy</h1>
-					<p class="muted">Last updated: 27 May 2026</p>
+					<p class="muted">Last updated: 25 August 2026</p>
 
 				<p>
 					This Privacy Policy explains how Weekly Tax App collects, uses, stores, and protects your information when you
@@ -145,10 +145,14 @@
 
 				<h2>3. Storage and security</h2>
 				<ul>
-					<li>Core data is stored in PostgreSQL.</li>
-					<li>Receipt files are stored in configured server/object storage.</li>
-					<li>Protected API routes require authenticated bearer tokens.</li>
-					<li>Passwords are hashed; sensitive auth materials use encryption controls.</li>
+					<li>Core data is stored in PostgreSQL with Point-in-Time Recovery (4-week backup window).</li>
+					<li>Daily automated database backups with automated archiving.</li>
+					<li>Receipt files stored in S3-compatible object storage with magic-byte content validation.</li>
+					<li>Protected API routes require authenticated bearer tokens with version-based session revocation.</li>
+					<li>Passwords hashed with bcrypt; two-step secrets encrypted at rest.</li>
+					<li>Two-factor backup recovery codes: SHA-256 hashed, single-use, account-locked fallback.</li>
+					<li>Audit logging of authentication events, password changes, and admin actions.</li>
+					<li>Signed, time-limited receipt download tokens (5-minute expiry).</li>
 				</ul>
 
 				<h2>4. Sharing</h2>
