@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Last updated: 27 May 2026
+Last updated: 24 August 2026
 
 This Privacy Policy explains how Weekly Tax App collects, uses, stores, and protects your information when you use the mobile app and backend API.
 
@@ -45,9 +45,11 @@ This policy applies to users of Weekly Tax App, including the mobile app and rel
 
 ### A. Account and sign-in information
 - Email address
-- Password (stored as a hash, not plain text)
+- Password (stored as bcrypt hash, not plain text)
 - Optional two-step verification information (encrypted secret and verification state)
+- Two-step backup recovery codes (SHA-256 hashed, single-use, for account recovery if authenticator is lost)
 - Password reset metadata (hashed reset code and expiry timestamp)
+- Session token version (used to invalidate all sessions when you reset password or change two-step settings)
 
 ### B. Tax and bookkeeping information you enter
 - Tax year and weekly/monthly/daily entry dates
@@ -86,11 +88,9 @@ We use data to:
 Your account, entries, expenses, summaries, and receipt metadata are stored in PostgreSQL.
 
 ### B. Receipt file storage
-Receipts are stored either:
-- Locally on server storage, or
-- In configured object storage (S3-compatible)
+Receipts are stored in Railway Buckets (S3-compatible object storage).
 
-The app stores a receipt path reference and uses authenticated, signed download links for access.
+The app stores a receipt path reference and uses authenticated, short-lived presigned URLs for downloads. All receipts are validated by file content inspection (magic-byte verification) before storage to reject misnamed or malicious files.
 
 ### C. Authentication and access controls
 - Protected API routes require a valid Bearer token
@@ -109,18 +109,24 @@ We may disclose data if required by law or valid legal process.
 ## 6. Data retention
 
 - Data remains stored until deleted by you or by service administrators according to operational requirements.
-- The app supports deletion of week-level data and clearing all entries, which removes linked records and associated receipt files from configured storage paths.
-- Backup copies may persist for operational recovery windows (typically up to 30 days).
+- The app supports deletion of week-level data and clearing all entries, which removes linked records and associated receipt files from storage.
+- Backup copies and point-in-time recovery archives may persist for up to 4 weeks for incident recovery purposes.
+- Two-step backup recovery codes are deleted when you disable two-step verification or request account deletion.
 
 ## 7. Security measures
 
 We apply technical controls including:
-- Password hashing
-- Encrypted two-step secrets
-- Authenticated API access
-- Signed, time-limited receipt download tokens
+- Password hashing (bcrypt)
+- Encrypted two-step secrets (dedicated key, not derived from password)
+- Two-step backup recovery codes (hashed, single-use)
+- Session revocation on password or two-step changes (via token version invalidation)
+- Authenticated API access (Bearer token validation on every request)
+- Presigned, time-limited receipt download URLs
+- Receipt content validation (magic-byte inspection to reject spoofed files)
 - Upload restrictions (file type/size limits)
-- Basic endpoint rate limiting
+- Endpoint rate limiting
+- Sign-in and admin action audit logging (stored for security investigation)
+- Point-in-time recovery (4-week WAL archive for database incident recovery)
 
 No method of transmission or storage is 100% secure, but we work to reduce risk using reasonable safeguards.
 
