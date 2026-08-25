@@ -148,12 +148,12 @@ export default function App(): React.JSX.Element {
   const [weekStartDate, setWeekStartDate] = useState(getCurrentMondayDisplayDate());
   const [modeLock, setModeLock] = useState<EntryModeLock | null>(null);
   const [serviceCompany, setServiceCompany] = useState("");
-  const [income, setIncome] = useState("0");
+  const [income, setIncome] = useState("");
 
   const [fuel, setFuel] = useState("0");
   const [fuelReimbursed, setFuelReimbursed] = useState("0");
-  const [travel, setTravel] = useState("0");
-  const [travelReimbursed, setTravelReimbursed] = useState("0");
+  const [travel, setTravel] = useState("");
+  const [travelReimbursed, setTravelReimbursed] = useState("");
   const [food, setFood] = useState("0");
   const [foodReimbursed, setFoodReimbursed] = useState("0");
   const [other, setOther] = useState("0");
