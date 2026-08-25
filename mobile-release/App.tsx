@@ -3135,6 +3135,12 @@ export default function App(): React.JSX.Element {
                       </Pressable>
                     </>
                   )}
+
+                  <Text style={styles.subSection}>Privacy & Legal</Text>
+                  <Text style={styles.noteText}>
+                    For our complete privacy policy, data handling practices, and how to request account deletion, see PRIVACY-POLICY.md
+                    in our public repository or contact support@aplccommodities.com.
+                  </Text>
                 </FormSection>
               )}
 
