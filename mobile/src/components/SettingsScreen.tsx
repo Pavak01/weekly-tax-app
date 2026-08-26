@@ -10,6 +10,7 @@ type SettingsScreenProps = {
   currentWeekStartDate: string;
   entryMode: "weekly" | "monthly" | "daily";
   isLoading?: boolean;
+  apiBaseUrl?: string;
 };
 
 export function SettingsScreen({
@@ -18,12 +19,17 @@ export function SettingsScreen({
   onClearAll,
   currentWeekStartDate,
   entryMode,
-  isLoading = false
+  isLoading = false,
+  apiBaseUrl = "http://localhost:4000"
 }: SettingsScreenProps): React.JSX.Element {
   const [clearingWeek, setClearingWeek] = useState(false);
   const [clearingAll, setClearingAll] = useState(false);
   const [pendingAction, setPendingAction] = useState<"current" | "all" | null>(null);
   const [confirmText, setConfirmText] = useState("");
+  const [deletionFullName, setDeletionFullName] = useState("");
+  const [deletionMessage, setDeletionMessage] = useState("");
+  const [isSubmittingDeletion, setIsSubmittingDeletion] = useState(false);
+  const [deletionResult, setDeletionResult] = useState<"success" | "error" | null>(null);
   const periodLabel = entryMode === "monthly" ? "month" : entryMode === "daily" ? "day" : "week";
   const clearCurrentLabel =
     entryMode === "monthly" ? "Clear This Month" : entryMode === "daily" ? "Clear This Day" : "Clear This Week";
@@ -116,6 +122,40 @@ export function SettingsScreen({
   const expectedPhrase = pendingAction === "all" ? "DELETE ALL" : "CLEAR";
   const canConfirmTypedAction = confirmText.trim().toUpperCase() === expectedPhrase;
 
+  async function submitDeletionRequest(): Promise<void> {
+    if (!deletionFullName.trim()) {
+      showMessage("Validation", "Please enter your full name.");
+      return;
+    }
+
+    setIsSubmittingDeletion(true);
+    setDeletionResult(null);
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/auth/account-deletion-request`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email,
+          fullName: deletionFullName,
+          message: deletionMessage || null
+        })
+      });
+
+      if (response.ok) {
+        setDeletionResult("success");
+        setDeletionFullName("");
+        setDeletionMessage("");
+      } else {
+        setDeletionResult("error");
+      }
+    } catch (error) {
+      setDeletionResult("error");
+    } finally {
+      setIsSubmittingDeletion(false);
+    }
+  }
+
   if (isLoading) {
     return (
       <View style={styles.loadingContainer}>
@@ -196,6 +236,52 @@ export function SettingsScreen({
               </Pressable>
             </View>
           </View>
+        )}
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.label}>Request Account Deletion</Text>
+        <Text style={styles.safetyHint}>Submit a request to permanently delete your account and data.</Text>
+
+        {deletionResult === "success" ? (
+          <Text style={[styles.noteText, { color: "#059669", marginTop: 12 }]}>
+            ✓ Request submitted. We will process it within 30 days.
+          </Text>
+        ) : deletionResult === "error" ? (
+          <Text style={[styles.noteText, { color: "#dc2626", marginTop: 12 }]}>
+            Failed to submit. Please try again.
+          </Text>
+        ) : (
+          <>
+            <Text style={styles.noteText}>Full Name</Text>
+            <TextInput
+              style={styles.input}
+              value={deletionFullName}
+              onChangeText={setDeletionFullName}
+              placeholder="Your full name"
+              editable={!isSubmittingDeletion}
+            />
+            <Text style={styles.noteText}>Message (optional)</Text>
+            <TextInput
+              style={[styles.input, { minHeight: 80 }]}
+              value={deletionMessage}
+              onChangeText={setDeletionMessage}
+              placeholder="Any additional details..."
+              multiline
+              editable={!isSubmittingDeletion}
+            />
+            <Pressable
+              onPress={submitDeletionRequest}
+              style={[styles.dangerButton, isSubmittingDeletion && styles.dangerButtonDisabled]}
+              disabled={isSubmittingDeletion}
+            >
+              {isSubmittingDeletion ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <Text style={styles.dangerButtonText}>Submit Deletion Request</Text>
+              )}
+            </Pressable>
+          </>
         )}
       </View>
 
@@ -337,5 +423,36 @@ const styles = StyleSheet.create({
     fontSize: typography.small,
     fontWeight: "500",
     color: colors.textMain
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    borderRadius: 10,
+    backgroundColor: colors.card,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    color: colors.textMain,
+    marginBottom: spacing.sm
+  },
+  noteText: {
+    fontSize: typography.small,
+    color: colors.textSecondary,
+    marginBottom: 6,
+    fontWeight: "500"
+  },
+  dangerButton: {
+    marginTop: spacing.sm,
+    paddingVertical: spacing.sm,
+    borderRadius: 10,
+    backgroundColor: "#dc2626",
+    alignItems: "center"
+  },
+  dangerButtonDisabled: {
+    opacity: 0.5
+  },
+  dangerButtonText: {
+    color: "#fff",
+    fontSize: typography.small,
+    fontWeight: "700"
   }
 });
