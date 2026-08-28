@@ -3109,7 +3109,6 @@ export default function App(): React.JSX.Element {
                   entryMode={entryMode}
                   onClearWeek={clearWeekData}
                   onClearAll={clearAllData}
-                  apiBaseUrl={API_BASE_URL}
                 />
               )}
             </Animated.ScrollView>

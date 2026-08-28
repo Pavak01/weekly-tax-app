@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { DangerAction } from "./Controls";
 import { colors, spacing, typography } from "../theme/tokens";
 
@@ -10,7 +10,6 @@ type SettingsScreenProps = {
   currentWeekStartDate: string;
   entryMode: "weekly" | "monthly" | "daily";
   isLoading?: boolean;
-  apiBaseUrl?: string;
 };
 
 export function SettingsScreen({
@@ -19,8 +18,7 @@ export function SettingsScreen({
   onClearAll,
   currentWeekStartDate,
   entryMode,
-  isLoading = false,
-  apiBaseUrl = "http://localhost:4000"
+  isLoading = false
 }: SettingsScreenProps): React.JSX.Element {
   const [clearingWeek, setClearingWeek] = useState(false);
   const [clearingAll, setClearingAll] = useState(false);
@@ -128,31 +126,17 @@ export function SettingsScreen({
       return;
     }
 
-    setIsSubmittingDeletion(true);
-    setDeletionResult(null);
+    const subject = "Account Deletion Request";
+    const body = `Email: ${email}\nFull Name: ${deletionFullName}\n\nMessage:\n${deletionMessage || "(none)"}`;
+    const mailtoUrl = `mailto:support@aplccommodities.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 
     try {
-      const response = await fetch(`${apiBaseUrl}/auth/account-deletion-request`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email,
-          fullName: deletionFullName,
-          message: deletionMessage || null
-        })
-      });
-
-      if (response.ok) {
-        setDeletionResult("success");
-        setDeletionFullName("");
-        setDeletionMessage("");
-      } else {
-        setDeletionResult("error");
-      }
+      await Linking.openURL(mailtoUrl);
+      setDeletionResult("success");
+      setDeletionFullName("");
+      setDeletionMessage("");
     } catch (error) {
-      setDeletionResult("error");
-    } finally {
-      setIsSubmittingDeletion(false);
+      showMessage("Error", "Could not open email client. Please email support@aplccommodities.com directly.");
     }
   }
 
@@ -272,14 +256,9 @@ export function SettingsScreen({
             />
             <Pressable
               onPress={submitDeletionRequest}
-              style={[styles.dangerButton, isSubmittingDeletion && styles.dangerButtonDisabled]}
-              disabled={isSubmittingDeletion}
+              style={styles.dangerButton}
             >
-              {isSubmittingDeletion ? (
-                <ActivityIndicator color="#fff" size="small" />
-              ) : (
-                <Text style={styles.dangerButtonText}>Submit Deletion Request</Text>
-              )}
+              <Text style={styles.dangerButtonText}>Send Deletion Request Email</Text>
             </Pressable>
           </>
         )}
