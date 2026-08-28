@@ -1121,12 +1121,16 @@ app.post("/auth/account-deletion-request", authRateLimit, async (req: Request, r
     }
 
     const ip = getClientIp(req);
-    await logSecurityEvent("account_deletion_request", {
+    await logSecurityEvent({
+      eventType: "account_deletion_request",
       email,
-      fullName,
-      message: message || null,
-      submittedAt: new Date().toISOString()
-    }, email, ip);
+      payload: {
+        fullName,
+        message: message || null,
+        submittedAt: new Date().toISOString()
+      },
+      ip
+    });
 
     return res.status(200).json({ success: true, message: "Deletion request received." });
   } catch (error) {
