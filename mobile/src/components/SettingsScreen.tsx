@@ -146,10 +146,20 @@ export function SettingsScreen({
         })
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
+      const responseText = await response.text();
+      let responseData: unknown;
+      try {
+        responseData = JSON.parse(responseText);
+      } catch {
         setDeletionResult("error");
-        showMessage("Error", errorData.error || "Failed to submit deletion request.");
+        showMessage("Error", `Invalid response from server: ${responseText}`);
+        return;
+      }
+
+      if (!response.ok) {
+        setDeletionResult("error");
+        const error = responseData as { error?: string };
+        showMessage("Error", error.error || "Failed to submit deletion request.");
         return;
       }
 
