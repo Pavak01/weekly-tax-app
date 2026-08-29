@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { DangerAction } from "./Controls";
 import { colors, spacing, typography } from "../theme/tokens";
 
@@ -24,6 +24,10 @@ export function SettingsScreen({
   const [clearingAll, setClearingAll] = useState(false);
   const [pendingAction, setPendingAction] = useState<"current" | "all" | null>(null);
   const [confirmText, setConfirmText] = useState("");
+  const [deletionFullName, setDeletionFullName] = useState("");
+  const [deletionMessage, setDeletionMessage] = useState("");
+  const [isSubmittingDeletion, setIsSubmittingDeletion] = useState(false);
+  const [deletionResult, setDeletionResult] = useState<"success" | "error" | null>(null);
   const periodLabel = entryMode === "monthly" ? "month" : entryMode === "daily" ? "day" : "week";
   const clearCurrentLabel =
     entryMode === "monthly" ? "Clear This Month" : entryMode === "daily" ? "Clear This Day" : "Clear This Week";
@@ -113,6 +117,26 @@ export function SettingsScreen({
     );
   };
 
+  async function submitDeletionRequest(): Promise<void> {
+    if (!deletionFullName.trim()) {
+      showMessage("Validation", "Please enter your full name.");
+      return;
+    }
+
+    const subject = "Account Deletion Request";
+    const body = `Email: ${email}\nFull Name: ${deletionFullName}\n\nMessage:\n${deletionMessage || "(none)"}`;
+    const mailtoUrl = `mailto:support@aplccommodities.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+
+    try {
+      await Linking.openURL(mailtoUrl);
+      setDeletionResult("success");
+      setDeletionFullName("");
+      setDeletionMessage("");
+    } catch (error) {
+      showMessage("Error", "Could not open email client. Please email support@aplccommodities.com directly.");
+    }
+  }
+
   const expectedPhrase = pendingAction === "all" ? "DELETE ALL" : "CLEAR";
   const canConfirmTypedAction = confirmText.trim().toUpperCase() === expectedPhrase;
 
@@ -196,6 +220,47 @@ export function SettingsScreen({
               </Pressable>
             </View>
           </View>
+        )}
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.label}>Request Account Deletion</Text>
+        <Text style={styles.safetyHint}>Submit a request to permanently delete your account and data.</Text>
+
+        {deletionResult === "success" ? (
+          <Text style={[styles.noteText, { color: "#059669", marginTop: 12 }]}>
+            ✓ Request submitted. We will process it within 30 days.
+          </Text>
+        ) : deletionResult === "error" ? (
+          <Text style={[styles.noteText, { color: "#dc2626", marginTop: 12 }]}>
+            Failed to submit. Please try again.
+          </Text>
+        ) : (
+          <>
+            <Text style={styles.noteText}>Full Name</Text>
+            <TextInput
+              style={styles.input}
+              value={deletionFullName}
+              onChangeText={setDeletionFullName}
+              placeholder="Your full name"
+              editable={!isSubmittingDeletion}
+            />
+            <Text style={styles.noteText}>Message (optional)</Text>
+            <TextInput
+              style={[styles.input, { minHeight: 80 }]}
+              value={deletionMessage}
+              onChangeText={setDeletionMessage}
+              placeholder="Any additional details..."
+              multiline
+              editable={!isSubmittingDeletion}
+            />
+            <Pressable
+              onPress={submitDeletionRequest}
+              style={styles.dangerButton}
+            >
+              <Text style={styles.dangerButtonText}>Send Deletion Request Email</Text>
+            </Pressable>
+          </>
         )}
       </View>
 
@@ -337,5 +402,32 @@ const styles = StyleSheet.create({
     fontSize: typography.small,
     fontWeight: "500",
     color: colors.textMain
+  },
+  noteText: {
+    fontSize: typography.small,
+    color: colors.textSecondary,
+    marginTop: spacing.sm
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    borderRadius: 10,
+    backgroundColor: colors.canvas,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    fontSize: typography.body,
+    color: colors.textMain
+  },
+  dangerButton: {
+    backgroundColor: colors.danger,
+    borderRadius: 10,
+    paddingVertical: spacing.md,
+    alignItems: "center",
+    marginTop: spacing.sm
+  },
+  dangerButtonText: {
+    color: "#fff",
+    fontSize: typography.small,
+    fontWeight: "700"
   }
 });
