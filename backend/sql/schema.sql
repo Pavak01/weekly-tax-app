@@ -124,6 +124,16 @@ CREATE TABLE IF NOT EXISTS tax_summaries (
   UNIQUE (user_id, tax_year)
 );
 
+CREATE TABLE IF NOT EXISTS security_audit_log (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id),
+  email TEXT,
+  event_type TEXT NOT NULL,
+  event_payload JSONB DEFAULT '{}'::jsonb,
+  ip_address TEXT,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS idx_weekly_entries_user_tax_year ON weekly_entries(user_id, tax_year);
 CREATE INDEX IF NOT EXISTS idx_expenses_weekly_entry ON expenses(weekly_entry_id);
 CREATE INDEX IF NOT EXISTS idx_receipts_weekly_entry ON receipts(weekly_entry_id);
