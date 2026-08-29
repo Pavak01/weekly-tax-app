@@ -17,6 +17,8 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN NOT NULL D
 ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_secret TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_pending_secret TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_enabled_at TIMESTAMP;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS deletion_requested_at TIMESTAMP;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS deletion_status TEXT DEFAULT 'active' CHECK (deletion_status IN ('active', 'pending', 'completed'));
 ALTER TABLE weekly_entries ADD COLUMN IF NOT EXISTS company_providing_services_for TEXT;
 ALTER TABLE weekly_entries ADD COLUMN IF NOT EXISTS entry_mode TEXT NOT NULL DEFAULT 'weekly';
 ALTER TABLE weekly_entries ADD COLUMN IF NOT EXISTS entry_date DATE;

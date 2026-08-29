@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { ActivityIndicator, Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { DangerAction } from "./Controls";
 import { colors, spacing, typography } from "../theme/tokens";
 
@@ -10,6 +10,8 @@ type SettingsScreenProps = {
   currentWeekStartDate: string;
   entryMode: "weekly" | "monthly" | "daily";
   isLoading?: boolean;
+  apiBaseUrl: string;
+  authToken: string;
 };
 
 export function SettingsScreen({
@@ -18,7 +20,9 @@ export function SettingsScreen({
   onClearAll,
   currentWeekStartDate,
   entryMode,
-  isLoading = false
+  isLoading = false,
+  apiBaseUrl,
+  authToken
 }: SettingsScreenProps): React.JSX.Element {
   const [clearingWeek, setClearingWeek] = useState(false);
   const [clearingAll, setClearingAll] = useState(false);
@@ -123,17 +127,38 @@ export function SettingsScreen({
       return;
     }
 
-    const subject = "Account Deletion Request";
-    const body = `Email: ${email}\nFull Name: ${deletionFullName}\n\nMessage:\n${deletionMessage || "(none)"}`;
-    const mailtoUrl = `mailto:support@aplccommodities.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    setIsSubmittingDeletion(true);
+    setDeletionResult(null);
 
     try {
-      await Linking.openURL(mailtoUrl);
+      const response = await fetch(`${apiBaseUrl}/auth/account-deletion-request`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          fullName: deletionFullName.trim(),
+          message: deletionMessage.trim() || null
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        setDeletionResult("error");
+        showMessage("Error", errorData.error || "Failed to submit deletion request.");
+        return;
+      }
+
       setDeletionResult("success");
       setDeletionFullName("");
       setDeletionMessage("");
     } catch (error) {
-      showMessage("Error", "Could not open email client. Please email support@aplccommodities.com directly.");
+      setDeletionResult("error");
+      const message = error instanceof Error ? error.message : "Network error. Please try again.";
+      showMessage("Error", message);
+    } finally {
+      setIsSubmittingDeletion(false);
     }
   }
 

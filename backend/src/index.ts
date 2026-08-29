@@ -1104,26 +1104,44 @@ app.get("/auth/me", requireAuth, async (req: Request, res: Response) => {
   }
 });
 
-app.post("/auth/account-deletion-request", authRateLimit, async (req: Request, res: Response) => {
+app.post("/auth/account-deletion-request", requireAuth, authRateLimit, async (req: Request, res: Response) => {
+  const authReq = req as AuthenticatedRequest;
   try {
-    const { email, fullName, message } = req.body;
+    const { fullName, message } = req.body;
 
-    if (!email || !fullName) {
-      return res.status(400).json({ error: "Email and full name are required." });
+    if (!fullName || typeof fullName !== "string") {
+      return res.status(400).json({ error: "Full name is required." });
     }
 
-    if (typeof email !== "string" || typeof fullName !== "string") {
-      return res.status(400).json({ error: "Invalid input format." });
+    if (fullName.trim().length < 2) {
+      return res.status(400).json({ error: "Full name must be at least 2 characters." });
     }
 
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return res.status(400).json({ error: "Invalid email address." });
+    const userResult = await db.query<{ email: string; deletion_status: string }>(
+      "SELECT email, deletion_status FROM users WHERE id = $1",
+      [authReq.userId]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: "User not found." });
     }
+
+    const user = userResult.rows[0];
+    if (user.deletion_status === "pending" || user.deletion_status === "completed") {
+      return res.status(400).json({ error: "Account deletion already requested." });
+    }
+
+    await db.query(
+      `UPDATE users
+       SET deletion_requested_at = NOW(), deletion_status = 'pending'
+       WHERE id = $1`,
+      [authReq.userId]
+    );
 
     const ip = getClientIp(req);
     await logSecurityEvent({
       eventType: "account_deletion_request",
-      email,
+      email: user.email,
       payload: {
         fullName,
         message: message || null,
@@ -1132,7 +1150,10 @@ app.post("/auth/account-deletion-request", authRateLimit, async (req: Request, r
       ip
     });
 
-    return res.status(200).json({ success: true, message: "Deletion request received." });
+    return res.status(200).json({
+      success: true,
+      message: "Account deletion request received. Your account and data will be deleted within 30 days."
+    });
   } catch (error) {
     return sendError(res, 500, "Failed to process deletion request", error);
   }
@@ -2477,6 +2498,58 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   return res.status(500).json({ error: "Internal server error", request_id: requestId });
 });
 
+async function processAccountDeletions(): Promise<void> {
+  try {
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    const usersToDelete = await db.query<{ id: string; email: string }>(
+      `SELECT id, email FROM users
+       WHERE deletion_status = 'pending' AND deletion_requested_at <= $1`,
+      [thirtyDaysAgo]
+    );
+
+    for (const user of usersToDelete.rows) {
+      const client = await db.connect();
+      try {
+        await client.query("BEGIN");
+
+        const weeklyEntries = await client.query<{ id: string }>(
+          "SELECT id FROM weekly_entries WHERE user_id = $1",
+          [user.id]
+        );
+
+        const weeklyEntryIds = weeklyEntries.rows.map((row) => row.id);
+        if (weeklyEntryIds.length > 0) {
+          await client.query("DELETE FROM receipts WHERE weekly_entry_id = ANY($1::uuid[])", [weeklyEntryIds]);
+          await client.query("DELETE FROM expenses WHERE weekly_entry_id = ANY($1::uuid[])", [weeklyEntryIds]);
+          await client.query("DELETE FROM weekly_entries WHERE id = ANY($1::uuid[])", [weeklyEntryIds]);
+        }
+
+        await client.query("DELETE FROM tax_summaries WHERE user_id = $1", [user.id]);
+        await client.query(
+          "UPDATE users SET deletion_status = 'completed' WHERE id = $1",
+          [user.id]
+        );
+
+        await client.query("COMMIT");
+        console.log(`[Deletion] Completed account deletion for ${user.email}`);
+      } catch (error) {
+        await client.query("ROLLBACK");
+        console.error(`[Deletion] Failed to delete account ${user.email}:`, error);
+      } finally {
+        client.release();
+      }
+    }
+  } catch (error) {
+    console.error("[Deletion] Error in processAccountDeletions:", error);
+  }
+}
+
+setInterval(() => {
+  void processAccountDeletions();
+}, 60 * 60 * 1000);
+
 app.listen(port, () => {
   console.log(`Backend running on port ${port}`);
+  void processAccountDeletions();
 });
