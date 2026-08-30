@@ -1,13 +1,15 @@
-console.log("=== ENV VARS AT STARTUP ===");
+console.log("=== FULL ENV VARS AT STARTUP ===");
+console.log("Total env var count:", Object.keys(process.env).length);
+console.log("All env keys:", Object.keys(process.env).sort().join(", "));
+console.log("---");
 console.log("PORT:", process.env.PORT);
 console.log("NODE_ENV:", process.env.NODE_ENV);
 console.log("DATABASE_URL:", process.env.DATABASE_URL);
-console.log("DATABASE_URL type:", typeof process.env.DATABASE_URL);
-console.log("DATABASE_URL length:", process.env.DATABASE_URL?.length);
-console.log("AWS_S3_BUCKET_NAME:", process.env.AWS_S3_BUCKET_NAME);
-console.log("JWT_SECRET:", process.env.JWT_SECRET ? "SET" : "NOT SET");
-console.log("All env keys:", Object.keys(process.env).filter(k => k.includes("DATABASE") || k.includes("AWS") || k.includes("JWT")).sort());
-console.log("===========================");
+console.log("RAILWAY_ENVIRONMENT_ID:", process.env.RAILWAY_ENVIRONMENT_ID);
+console.log("RAILWAY_SERVICE_ID:", process.env.RAILWAY_SERVICE_ID);
+console.log("RAILWAY_DEPLOYMENT_ID:", process.env.RAILWAY_DEPLOYMENT_ID);
+console.log("JWT_SECRET:", process.env.JWT_SECRET ? "SET" : "UNDEFINED");
+console.log("===================================");
 
 import bcrypt from "bcryptjs";
 import cors from "cors";
