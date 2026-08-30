@@ -1,3 +1,14 @@
+console.log("=== ENV VARS AT STARTUP ===");
+console.log("PORT:", process.env.PORT);
+console.log("NODE_ENV:", process.env.NODE_ENV);
+console.log("DATABASE_URL:", process.env.DATABASE_URL);
+console.log("DATABASE_URL type:", typeof process.env.DATABASE_URL);
+console.log("DATABASE_URL length:", process.env.DATABASE_URL?.length);
+console.log("AWS_S3_BUCKET_NAME:", process.env.AWS_S3_BUCKET_NAME);
+console.log("JWT_SECRET:", process.env.JWT_SECRET ? "SET" : "NOT SET");
+console.log("All env keys:", Object.keys(process.env).filter(k => k.includes("DATABASE") || k.includes("AWS") || k.includes("JWT")).sort());
+console.log("===========================");
+
 import bcrypt from "bcryptjs";
 import cors from "cors";
 import express from "express";
