@@ -61,7 +61,28 @@ app.use(
 app.use(express.json({ limit: "1mb" }));
 
 const port = Number(process.env.PORT || 4000);
-const jwtSecret: string = process.env.JWT_SECRET ?? "";
+
+let cachedJwtSecret: string | null = null;
+
+// Lazily validates and resolves JWT_SECRET, deferring the check until the
+// first JWT operation is actually performed (e.g. signing or verifying a
+// token). This ensures the module can be safely imported, and the server
+// can start listening, before Railway has finished injecting environment
+// variables into the process.
+function getJwtSecret(): string {
+  if (cachedJwtSecret) {
+    return cachedJwtSecret;
+  }
+
+  const secret = process.env.JWT_SECRET ?? "";
+  if (!secret) {
+    throw new Error("JWT_SECRET is required");
+  }
+
+  cachedJwtSecret = secret;
+  return cachedJwtSecret;
+}
+
 const rulePublishSecret: string = process.env.RULE_PUBLISH_SECRET?.trim() ?? "";
 const adminEmails = new Set(
   String(process.env.ADMIN_EMAILS ?? "")
@@ -83,10 +104,6 @@ const allowedReceiptMimeTypes = new Set([
   "image/webp",
   "text/plain"
 ]);
-
-if (!jwtSecret) {
-  throw new Error("JWT_SECRET is required");
-}
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -286,11 +303,11 @@ function getMonthStartFromIsoDate(value: string): string {
 }
 
 function signToken(userId: string, tokenVersion: number): string {
-  return jwt.sign({ sub: userId, ver: tokenVersion }, jwtSecret, { expiresIn: "7d" });
+  return jwt.sign({ sub: userId, ver: tokenVersion }, getJwtSecret(), { expiresIn: "7d" });
 }
 
 function signReceiptDownloadToken(userId: string, receiptId: string): string {
-  return jwt.sign({ sub: userId, rid: receiptId, purpose: "receipt-download" }, jwtSecret, {
+  return jwt.sign({ sub: userId, rid: receiptId, purpose: "receipt-download" }, getJwtSecret(), {
     expiresIn: receiptDownloadTtlSeconds
   });
 }
@@ -305,7 +322,7 @@ function generatePasswordResetCode(): string {
 }
 
 function hashPasswordResetCode(email: string, code: string): string {
-  return crypto.createHash("sha256").update(`${email}:${code}:${jwtSecret}`).digest("hex");
+  return crypto.createHash("sha256").update(`${email}:${code}:${getJwtSecret()}`).digest("hex");
 }
 
 const backupCodeAlphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
@@ -327,7 +344,7 @@ function normalizeBackupCode(code: string): string {
 }
 
 function hashBackupCode(userId: string, code: string): string {
-  return crypto.createHash("sha256").update(`${userId}:${normalizeBackupCode(code)}:${jwtSecret}`).digest("hex");
+  return crypto.createHash("sha256").update(`${userId}:${normalizeBackupCode(code)}:${getJwtSecret()}`).digest("hex");
 }
 
 async function issueBackupCodes(userId: string): Promise<string[]> {
@@ -389,13 +406,13 @@ async function logSecurityEvent(params: {
 }
 
 function signTwoFactorChallengeToken(userId: string): string {
-  return jwt.sign({ sub: userId, purpose: "two-factor-login" }, jwtSecret, {
+  return jwt.sign({ sub: userId, purpose: "two-factor-login" }, getJwtSecret(), {
     expiresIn: `${twoFactorChallengeTtlMinutes}m`
   });
 }
 
 function getTwoFactorEncryptionKey(): Buffer {
-  const seed = process.env.TWO_FACTOR_ENCRYPTION_KEY?.trim() || jwtSecret;
+  const seed = process.env.TWO_FACTOR_ENCRYPTION_KEY?.trim() || getJwtSecret();
   return crypto.createHash("sha256").update(seed).digest();
 }
 
@@ -532,7 +549,7 @@ async function requireAuth(req: Request, res: Response, next: NextFunction): Pro
   let sub: string;
   let tokenVersion: number;
   try {
-    const decoded = jwt.verify(token, jwtSecret);
+    const decoded = jwt.verify(token, getJwtSecret());
     if (typeof decoded !== "object" || decoded === null || !("sub" in decoded)) {
       res.status(401).json({ error: "Invalid token" });
       return;
@@ -793,7 +810,7 @@ app.post("/auth/verify-2fa", authRateLimit, async (req: Request, res: Response) 
 
   let userId = "";
   try {
-    const decoded = jwt.verify(parsed.data.challenge_token, jwtSecret);
+    const decoded = jwt.verify(parsed.data.challenge_token, getJwtSecret());
     if (typeof decoded !== "object" || decoded === null || decoded.purpose !== "two-factor-login") {
       return res.status(401).json({ error: "Invalid verification challenge" });
     }
@@ -1536,7 +1553,7 @@ app.get("/receipts/:receiptId/download", requireAuth, async (req: Request, res: 
   }
 
   try {
-    const decoded = jwt.verify(token, jwtSecret);
+    const decoded = jwt.verify(token, getJwtSecret());
     if (typeof decoded !== "object" || decoded === null) {
       return res.status(401).json({ error: "Invalid download token" });
     }
