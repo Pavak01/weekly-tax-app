@@ -8,7 +8,7 @@ import multer from "multer";
 import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
 import "dotenv/config";
-import { db } from "./db.js";
+import { db, ensureDatabaseCompatibility } from "./db.js";
 import { getDeductionSuggestions } from "./deductionEngine.js";
 import { getRuleMonitoringSnapshot, getRulesForTaxYear, getTaxYearFromDate } from "./rulesEngine.js";
 import { calculateTaxEstimate, generateComplianceWarnings } from "./taxEngine.js";
@@ -2551,5 +2551,13 @@ setInterval(() => {
 
 app.listen(port, () => {
   console.log(`Backend running on port ${port}`);
+
+  // DATABASE_URL is only validated when a query actually runs (see db.ts),
+  // so we run the compatibility check now that the app has started
+  // listening and Railway has had a chance to inject environment variables.
+  void ensureDatabaseCompatibility().catch((error) => {
+    console.error("Database compatibility check failed", error);
+  });
+
   void processAccountDeletions();
 });

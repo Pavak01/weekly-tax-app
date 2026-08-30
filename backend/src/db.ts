@@ -1,14 +1,38 @@
 import { Pool } from "pg";
 
-const connectionString = process.env.DATABASE_URL;
+let pool: Pool | null = null;
 
-if (!connectionString) {
-  throw new Error("DATABASE_URL is required");
+// Lazily creates (and memoizes) the connection pool. DATABASE_URL is only
+// validated here, at the moment a query is actually run, rather than at
+// module import time. This ensures the module can be safely imported before
+// Railway has finished injecting environment variables into the process.
+function getPool(): Pool {
+  if (pool) {
+    return pool;
+  }
+
+  const connectionString = process.env.DATABASE_URL;
+
+  if (!connectionString) {
+    throw new Error("DATABASE_URL is required");
+  }
+
+  pool = new Pool({ connectionString });
+  return pool;
 }
 
-export const db = new Pool({ connectionString });
+// `db` behaves like a `pg` Pool for all existing call sites (db.query,
+// db.connect, etc.), but defers actual Pool construction/validation until
+// the first property access, i.e. the first real database call.
+export const db: Pool = new Proxy({} as Pool, {
+  get(_target, prop, receiver) {
+    const actualPool = getPool();
+    const value = Reflect.get(actualPool, prop, actualPool);
+    return typeof value === "function" ? value.bind(actualPool) : value;
+  }
+});
 
-async function ensureDatabaseCompatibility(): Promise<void> {
+export async function ensureDatabaseCompatibility(): Promise<void> {
   const statements = [
     "ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS password_hash TEXT",
     "ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user'",
@@ -58,6 +82,3 @@ async function ensureDatabaseCompatibility(): Promise<void> {
   }
 }
 
-void ensureDatabaseCompatibility().catch((error) => {
-  console.error("Database compatibility check failed", error);
-});
