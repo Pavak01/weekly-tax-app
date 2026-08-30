@@ -18,7 +18,6 @@ import jwt from "jsonwebtoken";
 import multer from "multer";
 import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
-import "dotenv/config";
 import { db, ensureDatabaseCompatibility } from "./db.js";
 import { getDeductionSuggestions } from "./deductionEngine.js";
 import { getRuleMonitoringSnapshot, getRulesForTaxYear, getTaxYearFromDate } from "./rulesEngine.js";
