@@ -1,30 +1,68 @@
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
-const bucket = process.env.AWS_S3_BUCKET_NAME ?? "";
-const region = process.env.AWS_DEFAULT_REGION ?? "auto";
-const endpoint = process.env.AWS_ENDPOINT_URL ?? "";
-const accessKeyId = process.env.AWS_ACCESS_KEY_ID ?? "";
-const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY ?? "";
-const forcePathStyle = String(process.env.RECEIPTS_S3_FORCE_PATH_STYLE ?? "").trim().toLowerCase() === "true";
+let s3Client: S3Client | null = null;
 
-if (!bucket || !endpoint || !accessKeyId || !secretAccessKey) {
-  throw new Error(
-    "AWS_S3_BUCKET_NAME, AWS_ENDPOINT_URL, AWS_ACCESS_KEY_ID, and AWS_SECRET_ACCESS_KEY are required"
-  );
+// Lazily creates (and memoizes) the S3 client. AWS credentials are only
+// validated here, at the moment an S3 operation is actually performed,
+// rather than at module import time. This ensures the module can be safely
+// imported before Railway has finished injecting environment variables into
+// the process.
+function getS3Client(): S3Client {
+  if (s3Client) {
+    return s3Client;
+  }
+
+  const bucket = process.env.AWS_S3_BUCKET_NAME ?? "";
+  const endpoint = process.env.AWS_ENDPOINT_URL ?? "";
+  const accessKeyId = process.env.AWS_ACCESS_KEY_ID ?? "";
+  const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY ?? "";
+
+  if (!bucket || !endpoint || !accessKeyId || !secretAccessKey) {
+    throw new Error(
+      "AWS_S3_BUCKET_NAME, AWS_ENDPOINT_URL, AWS_ACCESS_KEY_ID, and AWS_SECRET_ACCESS_KEY are required"
+    );
+  }
+
+  const region = process.env.AWS_DEFAULT_REGION ?? "auto";
+  const forcePathStyle = String(process.env.RECEIPTS_S3_FORCE_PATH_STYLE ?? "").trim().toLowerCase() === "true";
+
+  s3Client = new S3Client({
+    region,
+    endpoint,
+    forcePathStyle,
+    credentials: { accessKeyId, secretAccessKey }
+  });
+  return s3Client;
 }
 
-const s3 = new S3Client({
-  region,
-  endpoint,
-  forcePathStyle,
-  credentials: { accessKeyId, secretAccessKey }
+function getBucketName(): string {
+  const bucket = process.env.AWS_S3_BUCKET_NAME ?? "";
+
+  if (!bucket) {
+    throw new Error(
+      "AWS_S3_BUCKET_NAME, AWS_ENDPOINT_URL, AWS_ACCESS_KEY_ID, and AWS_SECRET_ACCESS_KEY are required"
+    );
+  }
+
+  return bucket;
+}
+
+// `s3` behaves like an `S3Client` for all existing call sites (s3.send,
+// etc.), but defers actual client construction/validation until the first
+// property access, i.e. the first real S3 operation.
+const s3: S3Client = new Proxy({} as S3Client, {
+  get(_target, prop, receiver) {
+    const actualClient = getS3Client();
+    const value = Reflect.get(actualClient, prop, actualClient);
+    return typeof value === "function" ? value.bind(actualClient) : value;
+  }
 });
 
 export async function uploadReceiptObject(key: string, body: Buffer, contentType: string): Promise<void> {
   await s3.send(
     new PutObjectCommand({
-      Bucket: bucket,
+      Bucket: getBucketName(),
       Key: key,
       Body: body,
       ContentType: contentType
@@ -33,7 +71,7 @@ export async function uploadReceiptObject(key: string, body: Buffer, contentType
 }
 
 export async function deleteReceiptObject(key: string): Promise<void> {
-  await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+  await s3.send(new DeleteObjectCommand({ Bucket: getBucketName(), Key: key }));
 }
 
 export async function deleteReceiptObjects(keys: string[]): Promise<void> {
@@ -53,7 +91,7 @@ export async function deleteReceiptObjects(keys: string[]): Promise<void> {
 export async function getReceiptPresignedUrl(key: string, downloadFilename: string): Promise<string> {
   const safeFilename = downloadFilename.replace(/[\r\n"]/g, "");
   const command = new GetObjectCommand({
-    Bucket: bucket,
+    Bucket: getBucketName(),
     Key: key,
     ResponseContentDisposition: `attachment; filename="${safeFilename}"`
   });
