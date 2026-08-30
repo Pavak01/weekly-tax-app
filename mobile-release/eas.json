@@ -18,7 +18,7 @@
     "production": {
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_API_BASE_URL": "https://weekly-tax-app-production.up.railway.app",
+        "EXPO_PUBLIC_API_BASE_URL": "https://weekly-tax-app-t9ng-production.up.railway.app",
         "APP_IOS_BUNDLE_IDENTIFIER": "com.aplc.weeklytaxapp",
         "APP_ANDROID_PACKAGE": "com.aplc.weeklytaxapp"
       }
