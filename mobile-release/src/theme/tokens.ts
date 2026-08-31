@@ -5,7 +5,7 @@ export const colors = {
   inputBg: "#fffefb",
   inputBorder: "#e2ccb4",
   textMain: "#263f50",
-  textSecondary: "#513c2d",
+  textSecondary: "#3a2a1f",
   textMuted: "#7b624d",
   textNote: "#6d5440",
   accent: "#b65931",

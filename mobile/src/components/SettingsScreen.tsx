@@ -32,6 +32,7 @@ export function SettingsScreen({
   const [deletionMessage, setDeletionMessage] = useState("");
   const [isSubmittingDeletion, setIsSubmittingDeletion] = useState(false);
   const [deletionResult, setDeletionResult] = useState<"success" | "error" | null>(null);
+  const [deletionExpanded, setDeletionExpanded] = useState(false);
   const periodLabel = entryMode === "monthly" ? "month" : entryMode === "daily" ? "day" : "week";
   const clearCurrentLabel =
     entryMode === "monthly" ? "Clear This Month" : entryMode === "daily" ? "Clear This Day" : "Clear This Week";
@@ -269,45 +270,57 @@ export function SettingsScreen({
 
       <Text style={styles.sectionHeader}>Account Security</Text>
       <View style={styles.card}>
-        <Text style={styles.label}>Delete Account</Text>
-        <Text style={styles.safetyHint}>Submit a request to permanently delete your account and data.</Text>
+        <Pressable
+          onPress={() => setDeletionExpanded(!deletionExpanded)}
+          style={styles.deletionHeader}
+        >
+          <View>
+            <Text style={styles.label}>Delete Account</Text>
+            <Text style={styles.safetyHint}>Submit a request to permanently delete your account and data.</Text>
+          </View>
+          <Text style={styles.expandIcon}>{deletionExpanded ? "−" : "+"}</Text>
+        </Pressable>
 
-        {deletionResult === "success" ? (
-          <Text style={[styles.noteText, { color: "#059669", marginTop: 12 }]}>
-            ✓ Request submitted. We will process it within 30 days.
-          </Text>
-        ) : deletionResult === "error" ? (
-          <Text style={[styles.noteText, { color: "#dc2626", marginTop: 12 }]}>
-            Failed to submit. Please try again.
-          </Text>
-        ) : (
+        {deletionExpanded && (
           <>
-            <Text style={styles.noteText}>Full Name</Text>
-            <TextInput
-              style={styles.input}
-              value={deletionFullName}
-              onChangeText={setDeletionFullName}
-              placeholder="Your full name"
-              editable={!isSubmittingDeletion}
-            />
-            <Text style={styles.noteText}>Message (optional)</Text>
-            <TextInput
-              style={[styles.input, { minHeight: 80 }]}
-              value={deletionMessage}
-              onChangeText={setDeletionMessage}
-              placeholder="Any additional details..."
-              multiline
-              editable={!isSubmittingDeletion}
-            />
-            <Pressable
-              onPress={handleDeletionButtonPress}
-              disabled={isSubmittingDeletion}
-              style={[styles.dangerButton, isSubmittingDeletion && { opacity: 0.6 }]}
-            >
-              <Text style={styles.dangerButtonText}>
-                {isSubmittingDeletion ? "Submitting..." : "Send Deletion Request"}
+            {deletionResult === "success" ? (
+              <Text style={[styles.noteText, { color: "#059669" }]}>
+                ✓ Request submitted. We will process it within 30 days.
               </Text>
-            </Pressable>
+            ) : deletionResult === "error" ? (
+              <Text style={[styles.noteText, { color: "#dc2626" }]}>
+                Failed to submit. Please try again.
+              </Text>
+            ) : (
+              <>
+                <Text style={styles.noteText}>Full Name</Text>
+                <TextInput
+                  style={styles.input}
+                  value={deletionFullName}
+                  onChangeText={setDeletionFullName}
+                  placeholder="Your full name"
+                  editable={!isSubmittingDeletion}
+                />
+                <Text style={styles.noteText}>Message (optional)</Text>
+                <TextInput
+                  style={[styles.input, { minHeight: 80 }]}
+                  value={deletionMessage}
+                  onChangeText={setDeletionMessage}
+                  placeholder="Any additional details..."
+                  multiline
+                  editable={!isSubmittingDeletion}
+                />
+                <Pressable
+                  onPress={handleDeletionButtonPress}
+                  disabled={isSubmittingDeletion}
+                  style={[styles.dangerButton, isSubmittingDeletion && { opacity: 0.6 }]}
+                >
+                  <Text style={styles.dangerButtonText}>
+                    {isSubmittingDeletion ? "Submitting..." : "Send Deletion Request"}
+                  </Text>
+                </Pressable>
+              </>
+            )}
           </>
         )}
       </View>
@@ -335,7 +348,7 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: spacing.lg,
-    gap: spacing.lg
+    gap: spacing.md
   },
   loadingContainer: {
     flex: 1,
@@ -345,7 +358,7 @@ const styles = StyleSheet.create({
   card: {
     backgroundColor: colors.card,
     borderRadius: 18,
-    padding: 14,
+    padding: spacing.md,
     borderWidth: 1,
     borderColor: colors.cardBorder,
     gap: spacing.md
@@ -356,7 +369,7 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     textTransform: "uppercase",
     letterSpacing: 0.5,
-    marginTop: spacing.lg,
+    marginTop: spacing.md,
     marginBottom: spacing.sm,
     paddingHorizontal: spacing.md
   },
@@ -372,7 +385,18 @@ const styles = StyleSheet.create({
     color: colors.textSecondary
   },
   actionGroup: {
+    gap: spacing.sm
+  },
+  deletionHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
     gap: spacing.md
+  },
+  expandIcon: {
+    fontSize: typography.h2,
+    color: colors.textSecondary,
+    fontWeight: "600"
   },
   safetyHint: {
     fontSize: typography.small,

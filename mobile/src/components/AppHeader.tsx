@@ -54,18 +54,18 @@ const styles = StyleSheet.create({
   header: {
     backgroundColor: colors.navTextActive,
     paddingHorizontal: spacing.xxl,
-    paddingTop: spacing.lg,
-    paddingBottom: spacing.xl,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.lg,
     borderBottomLeftRadius: radius.xl,
     borderBottomRightRadius: radius.xl
   },
   eyebrow: {
     color: colors.accentText,
     textTransform: "uppercase",
-    letterSpacing: 1.4,
+    letterSpacing: 1.0,
     fontSize: typography.micro,
-    fontWeight: "700",
-    marginBottom: spacing.sm
+    fontWeight: "600",
+    marginBottom: spacing.md
   },
   title: {
     fontSize: typography.h1,
