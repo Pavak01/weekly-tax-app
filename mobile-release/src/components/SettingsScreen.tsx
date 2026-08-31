@@ -192,13 +192,15 @@ export function SettingsScreen({
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <Text style={styles.sectionHeader}>Account</Text>
       <View style={styles.card}>
-        <Text style={styles.label}>Account</Text>
+        <Text style={styles.label}>Email</Text>
         <Text style={styles.email}>{email}</Text>
       </View>
 
+      <Text style={styles.sectionHeader}>Data</Text>
       <View style={styles.card}>
-        <Text style={styles.label}>Data Management</Text>
+        <Text style={styles.label}>Management</Text>
         <Text style={styles.safetyHint}>Receipts linked to deleted entries are removed automatically.</Text>
         <View style={styles.actionGroup}>
           <DangerAction
@@ -265,8 +267,9 @@ export function SettingsScreen({
         )}
       </View>
 
+      <Text style={styles.sectionHeader}>Account Security</Text>
       <View style={styles.card}>
-        <Text style={styles.label}>Request Account Deletion</Text>
+        <Text style={styles.label}>Delete Account</Text>
         <Text style={styles.safetyHint}>Submit a request to permanently delete your account and data.</Text>
 
         {deletionResult === "success" ? (
@@ -309,6 +312,7 @@ export function SettingsScreen({
         )}
       </View>
 
+      <Text style={styles.sectionHeader}>About</Text>
       <View style={styles.card}>
         <Text style={styles.label}>App Information</Text>
         <View style={styles.infoRow}>
@@ -345,6 +349,16 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.cardBorder,
     gap: spacing.md
+  },
+  sectionHeader: {
+    fontSize: typography.small,
+    fontWeight: "700",
+    color: colors.textSecondary,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginTop: spacing.lg,
+    marginBottom: spacing.sm,
+    paddingHorizontal: spacing.md
   },
   label: {
     fontSize: typography.small,
