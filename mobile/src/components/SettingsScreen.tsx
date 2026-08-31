@@ -124,12 +124,19 @@ export function SettingsScreen({
   const expectedPhrase = pendingAction === "all" ? "DELETE ALL" : "CLEAR";
   const canConfirmTypedAction = confirmText.trim().toUpperCase() === expectedPhrase;
 
-  async function submitDeletionRequest(): Promise<void> {
+  function handleDeletionButtonPress(): void {
     if (!deletionFullName.trim()) {
       showMessage("Validation", "Please enter your full name.");
       return;
     }
+    confirmAction(
+      "Delete your account?",
+      "This will permanently delete your account and all data within 30 days. This action cannot be undone.",
+      submitDeletionRequest
+    );
+  }
 
+  async function submitDeletionRequest(): Promise<void> {
     setIsSubmittingDeletion(true);
     setDeletionResult(null);
 
@@ -290,10 +297,13 @@ export function SettingsScreen({
               editable={!isSubmittingDeletion}
             />
             <Pressable
-              onPress={submitDeletionRequest}
-              style={styles.dangerButton}
+              onPress={handleDeletionButtonPress}
+              disabled={isSubmittingDeletion}
+              style={[styles.dangerButton, isSubmittingDeletion && { opacity: 0.6 }]}
             >
-              <Text style={styles.dangerButtonText}>Send Deletion Request Email</Text>
+              <Text style={styles.dangerButtonText}>
+                {isSubmittingDeletion ? "Submitting..." : "Send Deletion Request"}
+              </Text>
             </Pressable>
           </>
         )}
