@@ -134,6 +134,26 @@ CREATE TABLE IF NOT EXISTS security_audit_log (
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS invoices (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id),
+  vendor_name TEXT NOT NULL,
+  invoice_number TEXT,
+  invoice_date DATE,
+  amount NUMERIC(12,2) NOT NULL,
+  currency TEXT DEFAULT 'GBP',
+  tax_amount NUMERIC(12,2),
+  payment_status TEXT NOT NULL DEFAULT 'pending' CHECK (payment_status IN ('pending', 'paid', 'overdue')),
+  due_date DATE,
+  payment_date DATE,
+  category TEXT,
+  file_url TEXT,
+  notes TEXT,
+  linked_expense_id UUID REFERENCES expenses(id),
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS idx_weekly_entries_user_tax_year ON weekly_entries(user_id, tax_year);
 CREATE INDEX IF NOT EXISTS idx_expenses_weekly_entry ON expenses(weekly_entry_id);
 CREATE INDEX IF NOT EXISTS idx_receipts_weekly_entry ON receipts(weekly_entry_id);
@@ -141,3 +161,7 @@ CREATE INDEX IF NOT EXISTS idx_receipts_user ON receipts(user_id);
 CREATE INDEX IF NOT EXISTS idx_tax_rule_sets_tax_year ON tax_rule_sets(tax_year);
 CREATE INDEX IF NOT EXISTS idx_tax_rule_sets_year_version ON tax_rule_sets(tax_year, version DESC);
 CREATE INDEX IF NOT EXISTS idx_tax_rule_audit_tax_year ON tax_rule_audit_events(tax_year, performed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_invoices_user ON invoices(user_id);
+CREATE INDEX IF NOT EXISTS idx_invoices_vendor ON invoices(vendor_name);
+CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(payment_status);
+CREATE INDEX IF NOT EXISTS idx_invoices_linked_expense ON invoices(linked_expense_id);
