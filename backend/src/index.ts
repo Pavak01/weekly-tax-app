@@ -2590,7 +2590,11 @@ app.post("/invoices", requireAuth, async (req: Request, res: Response) => {
       [authReq.userId, vendor_name, invoice_number || null, invoice_date || null, amount, currency || "GBP", tax_amount || null, payment_status || "pending", due_date || null, payment_date || null, category || null, file_url || null, notes || null, linked_expense_id || null]
     );
 
-    logSecurityEvent(authReq.userId, "invoice_created", { invoice_id: result.rows[0].id });
+    void logSecurityEvent({
+      userId: authReq.userId,
+      eventType: "invoice_created",
+      payload: { invoice_id: result.rows[0].id }
+    });
     res.json(result.rows[0]);
   } catch (error) {
     sendError(res, 500, "Failed to create invoice", error);
