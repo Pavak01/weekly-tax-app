@@ -33,6 +33,14 @@ export function SettingsScreen({
   const [isSubmittingDeletion, setIsSubmittingDeletion] = useState(false);
   const [deletionResult, setDeletionResult] = useState<"success" | "error" | null>(null);
   const [deletionExpanded, setDeletionExpanded] = useState(false);
+  const [showInvoiceForm, setShowInvoiceForm] = useState(false);
+  const [invoiceVendor, setInvoiceVendor] = useState("");
+  const [invoiceNumber, setInvoiceNumber] = useState("");
+  const [invoiceAmount, setInvoiceAmount] = useState("");
+  const [invoiceDate, setInvoiceDate] = useState("");
+  const [paymentStatus, setPaymentStatus] = useState("pending");
+  const [isSubmittingInvoice, setIsSubmittingInvoice] = useState(false);
+  const [invoiceResult, setInvoiceResult] = useState<"success" | "error" | null>(null);
   const periodLabel = entryMode === "monthly" ? "month" : entryMode === "daily" ? "day" : "week";
   const clearCurrentLabel =
     entryMode === "monthly" ? "Clear This Month" : entryMode === "daily" ? "Clear This Day" : "Clear This Week";
@@ -132,6 +140,54 @@ export function SettingsScreen({
       "This will permanently delete your account and all data within 30 days. This action cannot be undone.",
       submitDeletionRequest
     );
+  }
+
+  async function submitInvoice(): Promise<void> {
+    if (!invoiceVendor.trim() || !invoiceAmount.trim()) {
+      showMessage("Validation", "Vendor name and amount are required");
+      return;
+    }
+
+    setIsSubmittingInvoice(true);
+    setInvoiceResult(null);
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/invoices`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          vendor_name: invoiceVendor.trim(),
+          invoice_number: invoiceNumber.trim() || null,
+          invoice_date: invoiceDate || null,
+          amount: parseFloat(invoiceAmount),
+          payment_status: paymentStatus,
+          category: "expense"
+        })
+      });
+
+      if (!response.ok) {
+        setInvoiceResult("error");
+        showMessage("Error", "Failed to save invoice");
+        return;
+      }
+
+      setInvoiceResult("success");
+      setInvoiceVendor("");
+      setInvoiceNumber("");
+      setInvoiceAmount("");
+      setInvoiceDate("");
+      setPaymentStatus("pending");
+      setShowInvoiceForm(false);
+    } catch (error) {
+      setInvoiceResult("error");
+      const message = error instanceof Error ? error.message : "Network error";
+      showMessage("Error", message);
+    } finally {
+      setIsSubmittingInvoice(false);
+    }
   }
 
   async function submitDeletionRequest(): Promise<void> {
@@ -317,6 +373,95 @@ export function SettingsScreen({
                 >
                   <Text style={styles.dangerButtonText}>
                     {isSubmittingDeletion ? "Submitting..." : "Send Deletion Request"}
+                  </Text>
+                </Pressable>
+              </>
+            )}
+          </>
+        )}
+      </View>
+
+      <Text style={styles.sectionHeader}>Invoice Capture</Text>
+      <View style={styles.card}>
+        <Pressable
+          onPress={() => setShowInvoiceForm(!showInvoiceForm)}
+          style={styles.deletionHeader}
+        >
+          <View>
+            <Text style={styles.label}>Record Invoice</Text>
+            <Text style={styles.safetyHint}>Capture vendor invoices for expenses</Text>
+          </View>
+          <Text style={styles.expandIcon}>{showInvoiceForm ? "−" : "+"}</Text>
+        </Pressable>
+
+        {showInvoiceForm && (
+          <>
+            {invoiceResult === "success" ? (
+              <Text style={[styles.noteText, { color: "#059669" }]}>
+                ✓ Invoice saved successfully
+              </Text>
+            ) : (
+              <>
+                <Text style={styles.noteText}>Vendor Name *</Text>
+                <TextInput
+                  style={styles.input}
+                  value={invoiceVendor}
+                  onChangeText={setInvoiceVendor}
+                  placeholder="Vendor or company name"
+                  editable={!isSubmittingInvoice}
+                />
+                <Text style={styles.noteText}>Invoice Number</Text>
+                <TextInput
+                  style={styles.input}
+                  value={invoiceNumber}
+                  onChangeText={setInvoiceNumber}
+                  placeholder="e.g., INV-2026-001"
+                  editable={!isSubmittingInvoice}
+                />
+                <Text style={styles.noteText}>Amount *</Text>
+                <TextInput
+                  style={styles.input}
+                  value={invoiceAmount}
+                  onChangeText={setInvoiceAmount}
+                  placeholder="0.00"
+                  keyboardType="decimal-pad"
+                  editable={!isSubmittingInvoice}
+                />
+                <Text style={styles.noteText}>Invoice Date</Text>
+                <TextInput
+                  style={styles.input}
+                  value={invoiceDate}
+                  onChangeText={setInvoiceDate}
+                  placeholder="YYYY-MM-DD"
+                  editable={!isSubmittingInvoice}
+                />
+                <Text style={styles.noteText}>Status</Text>
+                <View style={styles.statusRow}>
+                  {["pending", "paid", "overdue"].map((status) => (
+                    <Pressable
+                      key={status}
+                      onPress={() => setPaymentStatus(status)}
+                      style={[
+                        styles.statusButton,
+                        paymentStatus === status && styles.statusButtonActive
+                      ]}
+                    >
+                      <Text style={[
+                        styles.statusButtonText,
+                        paymentStatus === status && styles.statusButtonTextActive
+                      ]}>
+                        {status}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+                <Pressable
+                  onPress={submitInvoice}
+                  disabled={isSubmittingInvoice}
+                  style={[styles.dangerButton, isSubmittingInvoice && { opacity: 0.6 }]}
+                >
+                  <Text style={styles.dangerButtonText}>
+                    {isSubmittingInvoice ? "Saving..." : "Save Invoice"}
                   </Text>
                 </Pressable>
               </>
@@ -512,5 +657,32 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: typography.small,
     fontWeight: "700"
+  },
+  statusRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginBottom: spacing.md
+  },
+  statusButton: {
+    flex: 1,
+    paddingVertical: spacing.sm,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    alignItems: "center",
+    backgroundColor: colors.card
+  },
+  statusButtonActive: {
+    backgroundColor: colors.accent,
+    borderColor: colors.accent
+  },
+  statusButtonText: {
+    fontSize: typography.small,
+    fontWeight: "600",
+    color: colors.textSecondary,
+    textTransform: "capitalize"
+  },
+  statusButtonTextActive: {
+    color: "#fff"
   }
 });
