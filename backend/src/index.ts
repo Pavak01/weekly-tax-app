@@ -2574,6 +2574,47 @@ async function processAccountDeletions(): Promise<void> {
   }
 }
 
+app.post("/invoices", requireAuth, async (req: Request, res: Response) => {
+  const authReq = req as AuthenticatedRequest;
+  const { vendor_name, invoice_number, invoice_date, amount, currency, tax_amount, payment_status, due_date, payment_date, category, file_url, notes, linked_expense_id } = req.body;
+
+  if (!vendor_name || !amount) {
+    return res.status(400).json({ error: "vendor_name and amount are required" });
+  }
+
+  try {
+    const result = await db.query(
+      `INSERT INTO invoices (user_id, vendor_name, invoice_number, invoice_date, amount, currency, tax_amount, payment_status, due_date, payment_date, category, file_url, notes, linked_expense_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+       RETURNING id, vendor_name, invoice_number, invoice_date, amount, payment_status, created_at`,
+      [authReq.userId, vendor_name, invoice_number || null, invoice_date || null, amount, currency || "GBP", tax_amount || null, payment_status || "pending", due_date || null, payment_date || null, category || null, file_url || null, notes || null, linked_expense_id || null]
+    );
+
+    logSecurityEvent(authReq.userId, "invoice_created", { invoice_id: result.rows[0].id });
+    res.json(result.rows[0]);
+  } catch (error) {
+    sendError(res, 500, "Failed to create invoice", error);
+  }
+});
+
+app.get("/invoices", requireAuth, async (req: Request, res: Response) => {
+  const authReq = req as AuthenticatedRequest;
+
+  try {
+    const result = await db.query(
+      `SELECT id, vendor_name, invoice_number, invoice_date, amount, payment_status, due_date, payment_date, category, file_url, created_at
+       FROM invoices
+       WHERE user_id = $1
+       ORDER BY invoice_date DESC, created_at DESC`,
+      [authReq.userId]
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    sendError(res, 500, "Failed to fetch invoices", error);
+  }
+});
+
 setInterval(() => {
   void processAccountDeletions();
 }, 60 * 60 * 1000);
