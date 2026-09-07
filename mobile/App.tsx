@@ -254,6 +254,7 @@ export default function App(): React.JSX.Element {
     created_at: string;
   }>>([]);
   const [isLoadingInvoices, setIsLoadingInvoices] = useState(false);
+  const [isExportingInvoices, setIsExportingInvoices] = useState(false);
 
   const contentOpacity = useRef(new Animated.Value(1)).current;
   const statusPulse = useRef(new Animated.Value(1)).current;
@@ -2026,6 +2027,45 @@ export default function App(): React.JSX.Element {
     }
   }
 
+  async function exportInvoicesAsCSV(): Promise<void> {
+    if (invoices.length === 0) {
+      Alert.alert("No invoices", "There are no invoices to export.");
+      return;
+    }
+
+    setIsExportingInvoices(true);
+    try {
+      const headers = ["Vendor", "Invoice Number", "Date", "Amount", "Status", "Created"];
+      const rows = invoices.map(inv => [
+        inv.vendor_name,
+        inv.invoice_number || "",
+        inv.invoice_date || "",
+        inv.amount.toFixed(2),
+        inv.payment_status,
+        new Date(inv.created_at).toLocaleDateString("en-GB")
+      ]);
+
+      const csvContent = [headers, ...rows].map(row =>
+        row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(",")
+      ).join("\n");
+
+      const fileName = `invoices-${new Date().toISOString().split("T")[0]}.csv`;
+      const fileUri = `${FileSystem.documentDirectory}${fileName}`;
+
+      await FileSystem.writeAsStringAsync(fileUri, csvContent);
+      await Sharing.shareAsync(fileUri, {
+        mimeType: "text/csv",
+        dialogTitle: "Export Invoices"
+      });
+
+      setStatus({ kind: "info", text: `Exported ${invoices.length} invoices.` });
+    } catch (error) {
+      Alert.alert("Export failed", String(error));
+    } finally {
+      setIsExportingInvoices(false);
+    }
+  }
+
   async function publishRuleVersion(): Promise<void> {
     if (!authUser) {
       setStatus({ kind: "error", text: "Please sign in first." });
@@ -3282,10 +3322,29 @@ export default function App(): React.JSX.Element {
                       </Text>
                     </View>
                   ) : (
-                    <Animated.ScrollView contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.xl }}>
-                      {invoices.map((invoice) => (
-                        <View
-                          key={invoice.id}
+                    <View style={{ flex: 1 }}>
+                      <Pressable
+                        onPress={exportInvoicesAsCSV}
+                        disabled={isExportingInvoices}
+                        style={{
+                          marginHorizontal: spacing.lg,
+                          marginBottom: spacing.md,
+                          paddingVertical: spacing.md,
+                          paddingHorizontal: spacing.lg,
+                          backgroundColor: colors.accent,
+                          borderRadius: radius.sm,
+                          alignItems: "center"
+                        }}
+                      >
+                        <Text style={{ color: colors.accentText, fontWeight: "600", fontSize: typography.small }}>
+                          {isExportingInvoices ? "Exporting..." : "📊 Export All as CSV"}
+                        </Text>
+                      </Pressable>
+
+                      <Animated.ScrollView contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.xl }}>
+                        {invoices.map((invoice) => (
+                          <View
+                            key={invoice.id}
                           style={{
                             backgroundColor: colors.card,
                             borderRadius: radius.md,
@@ -3334,8 +3393,9 @@ export default function App(): React.JSX.Element {
                             </View>
                           </View>
                         </View>
-                      ))}
-                    </Animated.ScrollView>
+                        ))}
+                      </Animated.ScrollView>
+                    </View>
                   )}
                 </View>
               )}
