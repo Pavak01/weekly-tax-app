@@ -34,7 +34,7 @@ const API_BASE_URL = runtimeApiBaseUrl || "http://localhost:4000";
 const QUICK_STATE_KEY = "weekly-tax-app:quick-state:v1";
 const AUTH_STATE_KEY = "weekly-tax-app:auth-state:v1";
 
-type Screen = "week" | "summary" | "audit" | "export" | "admin" | "guide" | "settings";
+type Screen = "week" | "summary" | "audit" | "export" | "admin" | "guide" | "settings" | "invoices";
 type EntryMode = "weekly" | "monthly" | "daily";
 
 type AuthUser = {
@@ -242,6 +242,18 @@ export default function App(): React.JSX.Element {
   const [isSubmittingInvoice, setIsSubmittingInvoice] = useState(false);
   const [invoiceFile, setInvoiceFile] = useState<{ uri: string; name: string } | null>(null);
   const [isUploadingFile, setIsUploadingFile] = useState(false);
+
+  const [invoices, setInvoices] = useState<Array<{
+    id: string;
+    vendor_name: string;
+    invoice_number: string | null;
+    invoice_date: string | null;
+    amount: number;
+    payment_status: string;
+    file_url: string | null;
+    created_at: string;
+  }>>([]);
+  const [isLoadingInvoices, setIsLoadingInvoices] = useState(false);
 
   const contentOpacity = useRef(new Animated.Value(1)).current;
   const statusPulse = useRef(new Animated.Value(1)).current;
@@ -1990,6 +2002,30 @@ export default function App(): React.JSX.Element {
     }
   }
 
+  async function fetchInvoices(): Promise<void> {
+    if (!authUser) {
+      setStatus({ kind: "error", text: "Please sign in first." });
+      return;
+    }
+
+    setIsLoadingInvoices(true);
+    try {
+      const response = await authedFetch("/invoices");
+      const payload = await response.json();
+      if (!response.ok) {
+        Alert.alert("Error", payload.error || "Failed to load invoices.");
+        return;
+      }
+
+      setInvoices(payload || []);
+      setStatus({ kind: "info", text: `Loaded ${(payload || []).length} invoices.` });
+    } catch (error) {
+      Alert.alert("Network error", String(error));
+    } finally {
+      setIsLoadingInvoices(false);
+    }
+  }
+
   async function publishRuleVersion(): Promise<void> {
     if (!authUser) {
       setStatus({ kind: "error", text: "Please sign in first." });
@@ -2376,6 +2412,7 @@ export default function App(): React.JSX.Element {
                 <SmallAction label="Entry" onPress={() => setScreen("week")} active={screen === "week"} />
                 <SmallAction label="Audit" onPress={() => setScreen("audit")} active={screen === "audit"} />
                 <SmallAction label="Summary" onPress={() => setScreen("summary")} active={screen === "summary"} />
+                <SmallAction label="Invoices" onPress={() => { setScreen("invoices"); fetchInvoices(); }} active={screen === "invoices"} />
                 <SmallAction label="Settings" onPress={() => setScreen("settings")} active={screen === "settings"} />
               </View>
 
@@ -3227,6 +3264,80 @@ export default function App(): React.JSX.Element {
                   apiBaseUrl={API_BASE_URL}
                   authToken={authToken || ""}
                 />
+              )}
+
+              {screen === "invoices" && (
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: typography.h2, fontWeight: "700", marginBottom: spacing.lg, marginHorizontal: spacing.lg, marginTop: spacing.lg }}>
+                    Invoices
+                  </Text>
+                  {isLoadingInvoices ? (
+                    <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+                      <ActivityIndicator size="large" color={colors.accent} />
+                    </View>
+                  ) : invoices.length === 0 ? (
+                    <View style={{ flex: 1, justifyContent: "center", alignItems: "center", paddingHorizontal: spacing.lg }}>
+                      <Text style={{ fontSize: typography.body, color: colors.textSecondary, textAlign: "center" }}>
+                        No invoices saved yet. Add one when you save an expense entry.
+                      </Text>
+                    </View>
+                  ) : (
+                    <Animated.ScrollView contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.xl }}>
+                      {invoices.map((invoice) => (
+                        <View
+                          key={invoice.id}
+                          style={{
+                            backgroundColor: colors.card,
+                            borderRadius: radius.md,
+                            padding: spacing.lg,
+                            marginBottom: spacing.md,
+                            borderWidth: 1,
+                            borderColor: colors.cardBorder
+                          }}
+                        >
+                          <View style={{ marginBottom: spacing.md }}>
+                            <Text style={{ fontSize: typography.body, fontWeight: "600", color: colors.textMain }}>
+                              {invoice.vendor_name}
+                            </Text>
+                          </View>
+                          {invoice.invoice_number && (
+                            <Text style={{ fontSize: typography.small, color: colors.textSecondary, marginBottom: spacing.sm }}>
+                              Invoice #: {invoice.invoice_number}
+                            </Text>
+                          )}
+                          {invoice.invoice_date && (
+                            <Text style={{ fontSize: typography.small, color: colors.textSecondary, marginBottom: spacing.sm }}>
+                              Date: {invoice.invoice_date}
+                            </Text>
+                          )}
+                          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: spacing.md }}>
+                            <Text style={{ fontSize: typography.body, fontWeight: "600", color: colors.textMain }}>
+                              £{invoice.amount.toFixed(2)}
+                            </Text>
+                            <View
+                              style={{
+                                paddingVertical: spacing.xs,
+                                paddingHorizontal: spacing.md,
+                                backgroundColor: invoice.payment_status === "paid" ? colors.successBg : invoice.payment_status === "overdue" ? colors.errorBg : colors.accentSoft,
+                                borderRadius: radius.sm
+                              }}
+                            >
+                              <Text
+                                style={{
+                                  fontSize: typography.small,
+                                  color: invoice.payment_status === "paid" ? colors.statusText : invoice.payment_status === "overdue" ? colors.accent : colors.accent,
+                                  fontWeight: "500"
+                                }}
+                              >
+                                {invoice.payment_status.charAt(0).toUpperCase() + invoice.payment_status.slice(1)}
+                              </Text>
+                            </View>
+                          </View>
+                        </View>
+                      ))}
+                    </Animated.ScrollView>
+                  )}
+                </View>
               )}
             </Animated.ScrollView>
           </>
