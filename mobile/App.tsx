@@ -12,6 +12,7 @@ import {
   Easing,
   KeyboardAvoidingView,
   Linking,
+  Modal,
   Platform,
   Pressable,
   SafeAreaView,
@@ -33,7 +34,7 @@ const API_BASE_URL = runtimeApiBaseUrl || "http://localhost:4000";
 const QUICK_STATE_KEY = "weekly-tax-app:quick-state:v1";
 const AUTH_STATE_KEY = "weekly-tax-app:auth-state:v1";
 
-type Screen = "week" | "summary" | "audit" | "export" | "admin" | "guide" | "settings";
+type Screen = "week" | "summary" | "audit" | "export" | "admin" | "guide" | "settings" | "invoices";
 type EntryMode = "weekly" | "monthly" | "daily";
 
 type AuthUser = {
@@ -231,6 +232,29 @@ export default function App(): React.JSX.Element {
   const [adminTargetEmail, setAdminTargetEmail] = useState("");
   const [adminTargetRole, setAdminTargetRole] = useState<"admin" | "user">("admin");
   const [isUpdatingUserRole, setIsUpdatingUserRole] = useState(false);
+
+  const [showInvoiceModal, setShowInvoiceModal] = useState(false);
+  const [invoiceVendor, setInvoiceVendor] = useState("");
+  const [invoiceNumber, setInvoiceNumber] = useState("");
+  const [invoiceAmount, setInvoiceAmount] = useState("");
+  const [invoiceDate, setInvoiceDate] = useState("");
+  const [invoiceStatus, setInvoiceStatus] = useState("pending");
+  const [isSubmittingInvoice, setIsSubmittingInvoice] = useState(false);
+  const [invoiceFile, setInvoiceFile] = useState<{ uri: string; name: string } | null>(null);
+  const [isUploadingFile, setIsUploadingFile] = useState(false);
+
+  const [invoices, setInvoices] = useState<Array<{
+    id: string;
+    vendor_name: string;
+    invoice_number: string | null;
+    invoice_date: string | null;
+    amount: number;
+    payment_status: string;
+    file_url: string | null;
+    created_at: string;
+  }>>([]);
+  const [isLoadingInvoices, setIsLoadingInvoices] = useState(false);
+  const [isExportingInvoices, setIsExportingInvoices] = useState(false);
 
   const contentOpacity = useRef(new Animated.Value(1)).current;
   const statusPulse = useRef(new Animated.Value(1)).current;
@@ -1586,6 +1610,9 @@ export default function App(): React.JSX.Element {
             ? `Daily entry recorded for ${effectiveDate}.`
             : "Weekly entry locked and recorded."
       );
+      if (expenses.length > 0) {
+        setShowInvoiceModal(true);
+      }
     } catch (error) {
       Alert.alert("Network error", String(error));
       setStatus({ kind: "error", text: "Network error while saving entry." });
@@ -1976,6 +2003,69 @@ export default function App(): React.JSX.Element {
     }
   }
 
+  async function fetchInvoices(): Promise<void> {
+    if (!authUser) {
+      setStatus({ kind: "error", text: "Please sign in first." });
+      return;
+    }
+
+    setIsLoadingInvoices(true);
+    try {
+      const response = await authedFetch("/invoices");
+      const payload = await response.json();
+      if (!response.ok) {
+        Alert.alert("Error", payload.error || "Failed to load invoices.");
+        return;
+      }
+
+      setInvoices(payload || []);
+      setStatus({ kind: "info", text: `Loaded ${(payload || []).length} invoices.` });
+    } catch (error) {
+      Alert.alert("Network error", String(error));
+    } finally {
+      setIsLoadingInvoices(false);
+    }
+  }
+
+  async function exportInvoicesAsCSV(): Promise<void> {
+    if (invoices.length === 0) {
+      Alert.alert("No invoices", "There are no invoices to export.");
+      return;
+    }
+
+    setIsExportingInvoices(true);
+    try {
+      const headers = ["Vendor", "Invoice Number", "Date", "Amount", "Status", "Created"];
+      const rows = invoices.map(inv => [
+        inv.vendor_name,
+        inv.invoice_number || "",
+        inv.invoice_date || "",
+        inv.amount.toFixed(2),
+        inv.payment_status,
+        new Date(inv.created_at).toLocaleDateString("en-GB")
+      ]);
+
+      const csvContent = [headers, ...rows].map(row =>
+        row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(",")
+      ).join("\n");
+
+      const fileName = `invoices-${new Date().toISOString().split("T")[0]}.csv`;
+      const fileUri = `${FileSystem.documentDirectory}${fileName}`;
+
+      await FileSystem.writeAsStringAsync(fileUri, csvContent);
+      await Sharing.shareAsync(fileUri, {
+        mimeType: "text/csv",
+        dialogTitle: "Export Invoices"
+      });
+
+      setStatus({ kind: "info", text: `Exported ${invoices.length} invoices.` });
+    } catch (error) {
+      Alert.alert("Export failed", String(error));
+    } finally {
+      setIsExportingInvoices(false);
+    }
+  }
+
   async function publishRuleVersion(): Promise<void> {
     if (!authUser) {
       setStatus({ kind: "error", text: "Please sign in first." });
@@ -2079,6 +2169,124 @@ export default function App(): React.JSX.Element {
       Alert.alert("Network error", String(error));
     } finally {
       setIsUpdatingUserRole(false);
+    }
+  }
+
+  async function submitInvoice(): Promise<void> {
+    const amount = Number(invoiceAmount);
+    const invoiceDateIso = invoiceDate ? parseDisplayDateToIso(invoiceDate) : null;
+    if (!invoiceVendor.trim() || !invoiceAmount.trim()) {
+      Alert.alert("Validation", "Vendor name and amount are required.");
+      return;
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      Alert.alert("Validation", "Amount must be a positive number.");
+      return;
+    }
+    if (invoiceDate && !invoiceDateIso) {
+      Alert.alert("Validation", "Invoice date must be a valid date.");
+      return;
+    }
+
+    setIsSubmittingInvoice(true);
+    try {
+      let fileUrl: string | null = null;
+      if (invoiceFile) {
+        fileUrl = await uploadInvoiceFile();
+        if (!fileUrl) {
+          return;
+        }
+      }
+
+      const response = await authedFetch("/invoices", {
+        method: "POST",
+        body: JSON.stringify({
+          vendor_name: invoiceVendor.trim(),
+          invoice_number: invoiceNumber.trim() || null,
+          invoice_date: invoiceDateIso,
+          amount,
+          payment_status: invoiceStatus,
+          currency: "GBP",
+          file_url: fileUrl || null
+        })
+      });
+
+      const payload = await response.json();
+      if (!response.ok) {
+        Alert.alert("Failed to save invoice", payload.error || "Could not save invoice.");
+        return;
+      }
+
+      Alert.alert("Success", "Invoice saved successfully.");
+      setInvoiceVendor("");
+      setInvoiceNumber("");
+      setInvoiceAmount("");
+      setInvoiceDate("");
+      setInvoiceStatus("pending");
+      setInvoiceFile(null);
+      setShowInvoiceModal(false);
+    } catch (error) {
+      Alert.alert("Network error", String(error));
+    } finally {
+      setIsSubmittingInvoice(false);
+    }
+  }
+
+  async function pickInvoiceFile(): Promise<void> {
+    try {
+      setIsUploadingFile(true);
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsEditing: false,
+        aspect: [4, 3],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        const file = result.assets[0];
+        setInvoiceFile({
+          uri: file.uri,
+          name: file.fileName || `invoice-${Date.now()}.jpg`,
+        });
+      }
+    } catch (error) {
+      Alert.alert("Error", "Failed to pick file: " + String(error));
+    } finally {
+      setIsUploadingFile(false);
+    }
+  }
+
+  async function uploadInvoiceFile(): Promise<string | null> {
+    if (!invoiceFile) {
+      return null;
+    }
+
+    try {
+      const body = new FormData();
+      body.append("file", {
+        uri: invoiceFile.uri,
+        name: invoiceFile.name,
+        type: "image/jpeg"
+      } as never);
+
+      const response = await fetch(`${API_BASE_URL}/invoices/upload`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${authToken ?? ""}`
+        },
+        body
+      });
+
+      const payload = await response.json();
+      if (!response.ok) {
+        Alert.alert("Upload failed", payload.error || "Could not upload invoice file");
+        return null;
+      }
+
+      return payload.file_url || null;
+    } catch (error) {
+      Alert.alert("Upload error", "Failed to upload file: " + String(error));
+      return null;
     }
   }
 
@@ -2257,6 +2465,7 @@ export default function App(): React.JSX.Element {
                 <SmallAction label="Entry" onPress={() => setScreen("week")} active={screen === "week"} />
                 <SmallAction label="Audit" onPress={() => setScreen("audit")} active={screen === "audit"} />
                 <SmallAction label="Summary" onPress={() => setScreen("summary")} active={screen === "summary"} />
+                <SmallAction label="Invoices" onPress={() => { setScreen("invoices"); fetchInvoices(); }} active={screen === "invoices"} />
                 <SmallAction label="Settings" onPress={() => setScreen("settings")} active={screen === "settings"} />
               </View>
 
@@ -3109,8 +3318,243 @@ export default function App(): React.JSX.Element {
                   authToken={authToken || ""}
                 />
               )}
+
+              {screen === "invoices" && (
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: typography.h2, fontWeight: "700", marginBottom: spacing.lg, marginHorizontal: spacing.lg, marginTop: spacing.lg }}>
+                    Invoices
+                  </Text>
+                  {isLoadingInvoices ? (
+                    <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+                      <ActivityIndicator size="large" color={colors.accent} />
+                    </View>
+                  ) : invoices.length === 0 ? (
+                    <View style={{ flex: 1, justifyContent: "center", alignItems: "center", paddingHorizontal: spacing.lg }}>
+                      <Text style={{ fontSize: typography.body, color: colors.textSecondary, textAlign: "center" }}>
+                        No invoices saved yet. Add one when you save an expense entry.
+                      </Text>
+                    </View>
+                  ) : (
+                    <View style={{ flex: 1 }}>
+                      <Pressable
+                        onPress={exportInvoicesAsCSV}
+                        disabled={isExportingInvoices}
+                        style={{
+                          marginHorizontal: spacing.lg,
+                          marginBottom: spacing.md,
+                          paddingVertical: spacing.md,
+                          paddingHorizontal: spacing.lg,
+                          backgroundColor: colors.accent,
+                          borderRadius: radius.sm,
+                          alignItems: "center"
+                        }}
+                      >
+                        <Text style={{ color: colors.accentText, fontWeight: "600", fontSize: typography.small }}>
+                          {isExportingInvoices ? "Exporting..." : "📊 Export All as CSV"}
+                        </Text>
+                      </Pressable>
+
+                      <Animated.ScrollView contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.xl }}>
+                        {invoices.map((invoice) => (
+                          <View
+                            key={invoice.id}
+                          style={{
+                            backgroundColor: colors.card,
+                            borderRadius: radius.md,
+                            padding: spacing.lg,
+                            marginBottom: spacing.md,
+                            borderWidth: 1,
+                            borderColor: colors.cardBorder
+                          }}
+                        >
+                          <View style={{ marginBottom: spacing.md }}>
+                            <Text style={{ fontSize: typography.body, fontWeight: "600", color: colors.textMain }}>
+                              {invoice.vendor_name}
+                            </Text>
+                          </View>
+                          {invoice.invoice_number && (
+                            <Text style={{ fontSize: typography.small, color: colors.textSecondary, marginBottom: spacing.sm }}>
+                              Invoice #: {invoice.invoice_number}
+                            </Text>
+                          )}
+                          {invoice.invoice_date && (
+                            <Text style={{ fontSize: typography.small, color: colors.textSecondary, marginBottom: spacing.sm }}>
+                              Date: {invoice.invoice_date}
+                            </Text>
+                          )}
+                          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: spacing.md }}>
+                            <Text style={{ fontSize: typography.body, fontWeight: "600", color: colors.textMain }}>
+                              £{invoice.amount.toFixed(2)}
+                            </Text>
+                            <View
+                              style={{
+                                paddingVertical: spacing.xs,
+                                paddingHorizontal: spacing.md,
+                                backgroundColor: invoice.payment_status === "paid" ? colors.successBg : invoice.payment_status === "overdue" ? colors.errorBg : colors.accentSoft,
+                                borderRadius: radius.sm
+                              }}
+                            >
+                              <Text
+                                style={{
+                                  fontSize: typography.small,
+                                  color: invoice.payment_status === "paid" ? colors.statusText : invoice.payment_status === "overdue" ? colors.accent : colors.accent,
+                                  fontWeight: "500"
+                                }}
+                              >
+                                {invoice.payment_status.charAt(0).toUpperCase() + invoice.payment_status.slice(1)}
+                              </Text>
+                            </View>
+                          </View>
+                        </View>
+                        ))}
+                      </Animated.ScrollView>
+                    </View>
+                  )}
+                </View>
+              )}
             </Animated.ScrollView>
           </>
+        )}
+
+        {showInvoiceModal && (
+          <Modal transparent animationType="slide">
+            <SafeAreaView style={{ flex: 1, backgroundColor: colors.canvas }}>
+              <View style={{ flex: 1, padding: spacing.lg, justifyContent: "space-between" }}>
+                <View>
+                  <Text style={{ fontSize: typography.h2, fontWeight: "600", marginBottom: spacing.lg }}>
+                    Save Invoice
+                  </Text>
+                  <Text style={{ fontSize: typography.body, color: colors.textSecondary, marginBottom: spacing.xl }}>
+                    Add invoice details for audit records
+                  </Text>
+
+                  <TextInput
+                    placeholder="Vendor Name *"
+                    value={invoiceVendor}
+                    onChangeText={setInvoiceVendor}
+                    style={{ borderBottomWidth: 1, borderColor: colors.inputBorder, paddingVertical: spacing.sm, marginBottom: spacing.lg }}
+                    placeholderTextColor={colors.textMuted}
+                  />
+
+                  <TextInput
+                    placeholder="Invoice Number"
+                    value={invoiceNumber}
+                    onChangeText={setInvoiceNumber}
+                    style={{ borderBottomWidth: 1, borderColor: colors.inputBorder, paddingVertical: spacing.sm, marginBottom: spacing.lg }}
+                    placeholderTextColor={colors.textMuted}
+                  />
+
+                  <TextInput
+                    placeholder="Amount *"
+                    value={invoiceAmount}
+                    onChangeText={setInvoiceAmount}
+                    keyboardType="decimal-pad"
+                    style={{ borderBottomWidth: 1, borderColor: colors.inputBorder, paddingVertical: spacing.sm, marginBottom: spacing.lg }}
+                    placeholderTextColor={colors.textMuted}
+                  />
+
+                  <View style={{ marginBottom: spacing.lg }}>
+                    <DateField
+                      label="Invoice Date"
+                      value={invoiceDate}
+                      onChange={setInvoiceDate}
+                      placeholder="DD-MM-YYYY"
+                    />
+                  </View>
+
+                  <View style={{ marginBottom: spacing.lg }}>
+                    <Text style={{ fontSize: typography.body, marginBottom: spacing.sm }}>Payment Status</Text>
+                    <View style={{ flexDirection: "row", gap: spacing.sm }}>
+                      {["pending", "paid", "overdue"].map(status => (
+                        <Pressable
+                          key={status}
+                          onPress={() => setInvoiceStatus(status as "pending" | "paid" | "overdue")}
+                          style={{
+                            flex: 1,
+                            paddingVertical: spacing.sm,
+                            paddingHorizontal: spacing.md,
+                            backgroundColor: invoiceStatus === status ? colors.accent : colors.card,
+                            borderRadius: radius.sm,
+                            alignItems: "center"
+                          }}
+                        >
+                          <Text style={{ color: invoiceStatus === status ? colors.accentText : colors.textMain, fontWeight: "500" }}>
+                            {status.charAt(0).toUpperCase() + status.slice(1)}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  </View>
+
+                  <View style={{ marginBottom: spacing.lg }}>
+                    <Pressable
+                      onPress={pickInvoiceFile}
+                      disabled={isUploadingFile}
+                      style={{
+                        paddingVertical: spacing.md,
+                        paddingHorizontal: spacing.lg,
+                        backgroundColor: colors.card,
+                        borderRadius: radius.sm,
+                        borderWidth: 1,
+                        borderColor: colors.inputBorder,
+                        alignItems: "center"
+                      }}
+                    >
+                      <Text style={{ color: colors.textMain, fontWeight: "500" }}>
+                        {isUploadingFile ? "Loading..." : invoiceFile ? "✓ File attached" : "📎 Attach receipt (optional)"}
+                      </Text>
+                    </Pressable>
+                    {invoiceFile && (
+                      <Text style={{ fontSize: typography.small, color: colors.textSecondary, marginTop: spacing.sm }}>
+                        {invoiceFile.name}
+                      </Text>
+                    )}
+                  </View>
+                </View>
+
+                <View style={{ gap: spacing.md }}>
+                  <Pressable
+                    onPress={submitInvoice}
+                    disabled={isSubmittingInvoice}
+                    style={{
+                      backgroundColor: colors.accent,
+                      paddingVertical: spacing.lg,
+                      borderRadius: radius.md,
+                      alignItems: "center"
+                    }}
+                  >
+                    <Text style={{ color: colors.accentText, fontSize: typography.body, fontWeight: "600" }}>
+                      {isSubmittingInvoice ? "Saving..." : "Save Invoice"}
+                    </Text>
+                  </Pressable>
+
+                  <Pressable
+                    onPress={() => {
+                      setShowInvoiceModal(false);
+                      setInvoiceVendor("");
+                      setInvoiceNumber("");
+                      setInvoiceAmount("");
+                      setInvoiceDate("");
+                      setInvoiceStatus("pending");
+                      setInvoiceFile(null);
+                    }}
+                    style={{
+                      backgroundColor: colors.card,
+                      paddingVertical: spacing.lg,
+                      borderRadius: radius.md,
+                      alignItems: "center",
+                      borderWidth: 1,
+                      borderColor: colors.inputBorder
+                    }}
+                  >
+                    <Text style={{ color: colors.textMain, fontSize: typography.body, fontWeight: "600" }}>
+                      Skip for Now
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+            </SafeAreaView>
+          </Modal>
         )}
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -3336,8 +3780,7 @@ const styles = StyleSheet.create({
     alignItems: "center"
   },
   primaryButtonPressed: {
-    opacity: 0.85,
-    backgroundColor: colors.accentDarker || colors.accent
+    opacity: 0.85
   },
   buttonDisabled: {
     opacity: 0.5

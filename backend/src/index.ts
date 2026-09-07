@@ -2578,8 +2578,11 @@ app.post("/invoices", requireAuth, async (req: Request, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const { vendor_name, invoice_number, invoice_date, amount, currency, tax_amount, payment_status, due_date, payment_date, category, file_url, notes, linked_expense_id } = req.body;
 
-  if (!vendor_name || !amount) {
+  if (typeof vendor_name !== "string" || !vendor_name.trim() || typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0) {
     return res.status(400).json({ error: "vendor_name and amount are required" });
+  }
+  if (invoice_date !== undefined && invoice_date !== null && !/^\d{4}-\d{2}-\d{2}$/.test(String(invoice_date))) {
+    return res.status(400).json({ error: "invoice_date must be in YYYY-MM-DD format" });
   }
 
   try {
@@ -2600,6 +2603,31 @@ app.post("/invoices", requireAuth, async (req: Request, res: Response) => {
     sendError(res, 500, "Failed to create invoice", error);
   }
 });
+
+app.post(
+  "/invoices/upload",
+  uploadRateLimit,
+  requireAuth,
+  upload.single("file"),
+  async (req: Request, res: Response) => {
+    const authReq = req as AuthenticatedRequest;
+    if (!req.file) {
+      return res.status(400).json({ error: "file is required" });
+    }
+    if (!receiptContentMatchesDeclaredType(req.file.buffer, req.file.mimetype)) {
+      return res.status(400).json({ error: "File content does not match its declared type" });
+    }
+
+    try {
+      const safeName = req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const storageKey = `invoices/${authReq.userId}/${uuidv4()}-${safeName}`;
+      await uploadReceiptObject(storageKey, req.file.buffer, req.file.mimetype);
+      return res.status(201).json({ file_url: storageKey });
+    } catch (error) {
+      return sendError(res, 500, "Failed to upload invoice file", error);
+    }
+  }
+);
 
 app.get("/invoices", requireAuth, async (req: Request, res: Response) => {
   const authReq = req as AuthenticatedRequest;
