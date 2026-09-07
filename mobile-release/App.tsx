@@ -2177,8 +2177,18 @@ export default function App(): React.JSX.Element {
   }
 
   async function submitInvoice(): Promise<void> {
+    const amount = Number(invoiceAmount);
+    const invoiceDateIso = invoiceDate ? parseDisplayDateToIso(invoiceDate) : null;
     if (!invoiceVendor.trim() || !invoiceAmount.trim()) {
       Alert.alert("Validation", "Vendor name and amount are required.");
+      return;
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      Alert.alert("Validation", "Amount must be a positive number.");
+      return;
+    }
+    if (invoiceDate && !invoiceDateIso) {
+      Alert.alert("Validation", "Invoice date must be a valid date.");
       return;
     }
 
@@ -2194,8 +2204,8 @@ export default function App(): React.JSX.Element {
         body: JSON.stringify({
           vendor_name: invoiceVendor.trim(),
           invoice_number: invoiceNumber.trim() || null,
-          invoice_date: invoiceDate || null,
-          amount: parseFloat(invoiceAmount),
+          invoice_date: invoiceDateIso,
+          amount,
           payment_status: invoiceStatus,
           currency: "GBP",
           file_url: fileUrl || null
