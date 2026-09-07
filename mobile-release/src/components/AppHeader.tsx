@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { NavButton } from "./Controls";
 import { colors, radius, spacing, typography } from "../theme/tokens";
 
-type Screen = "week" | "summary" | "audit" | "export" | "admin" | "guide" | "settings";
+type Screen = "week" | "summary" | "audit" | "export" | "admin" | "guide" | "settings" | "invoices";
 
 export function AppHeader({
   screen,

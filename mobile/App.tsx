@@ -2193,6 +2193,9 @@ export default function App(): React.JSX.Element {
       let fileUrl: string | null = null;
       if (invoiceFile) {
         fileUrl = await uploadInvoiceFile();
+        if (!fileUrl) {
+          return;
+        }
       }
 
       const response = await authedFetch("/invoices", {
@@ -3777,8 +3780,7 @@ const styles = StyleSheet.create({
     alignItems: "center"
   },
   primaryButtonPressed: {
-    opacity: 0.85,
-    backgroundColor: colors.accentDarker || colors.accent
+    opacity: 0.85
   },
   buttonDisabled: {
     opacity: 0.5
