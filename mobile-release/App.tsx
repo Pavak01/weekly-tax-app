@@ -244,6 +244,8 @@ export default function App(): React.JSX.Element {
   const [invoiceDate, setInvoiceDate] = useState("");
   const [invoiceStatus, setInvoiceStatus] = useState("pending");
   const [isSubmittingInvoice, setIsSubmittingInvoice] = useState(false);
+  const [invoiceFile, setInvoiceFile] = useState<{ uri: string; name: string } | null>(null);
+  const [isUploadingFile, setIsUploadingFile] = useState(false);
 
   const contentOpacity = useRef(new Animated.Value(1)).current;
   const statusPulse = useRef(new Animated.Value(1)).current;
@@ -2106,6 +2108,11 @@ export default function App(): React.JSX.Element {
 
     setIsSubmittingInvoice(true);
     try {
+      let fileUrl: string | null = null;
+      if (invoiceFile) {
+        fileUrl = await uploadInvoiceFile();
+      }
+
       const response = await authedFetch("/invoices", {
         method: "POST",
         body: JSON.stringify({
@@ -2114,7 +2121,8 @@ export default function App(): React.JSX.Element {
           invoice_date: invoiceDate || null,
           amount: parseFloat(invoiceAmount),
           payment_status: invoiceStatus,
-          currency: "GBP"
+          currency: "GBP",
+          file_url: fileUrl || null
         })
       });
 
@@ -2130,11 +2138,70 @@ export default function App(): React.JSX.Element {
       setInvoiceAmount("");
       setInvoiceDate("");
       setInvoiceStatus("pending");
+      setInvoiceFile(null);
       setShowInvoiceModal(false);
     } catch (error) {
       Alert.alert("Network error", String(error));
     } finally {
       setIsSubmittingInvoice(false);
+    }
+  }
+
+  async function pickInvoiceFile(): Promise<void> {
+    try {
+      setIsUploadingFile(true);
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsEditing: false,
+        aspect: [4, 3],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        const file = result.assets[0];
+        setInvoiceFile({
+          uri: file.uri,
+          name: file.fileName || `invoice-${Date.now()}.jpg`,
+        });
+      }
+    } catch (error) {
+      Alert.alert("Error", "Failed to pick file: " + String(error));
+    } finally {
+      setIsUploadingFile(false);
+    }
+  }
+
+  async function uploadInvoiceFile(): Promise<string | null> {
+    if (!invoiceFile) {
+      return null;
+    }
+
+    try {
+      const body = new FormData();
+      body.append("file", {
+        uri: invoiceFile.uri,
+        name: invoiceFile.name,
+        type: "image/jpeg"
+      } as never);
+
+      const response = await fetch(`${API_BASE_URL}/invoices/upload`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${authToken ?? ""}`
+        },
+        body
+      });
+
+      const payload = await response.json();
+      if (!response.ok) {
+        Alert.alert("Upload failed", payload.error || "Could not upload invoice file");
+        return null;
+      }
+
+      return payload.file_url || null;
+    } catch (error) {
+      Alert.alert("Upload error", "Failed to upload file: " + String(error));
+      return null;
     }
   }
 
@@ -3238,6 +3305,31 @@ export default function App(): React.JSX.Element {
                       ))}
                     </View>
                   </View>
+
+                  <View style={{ marginBottom: spacing.lg }}>
+                    <Pressable
+                      onPress={pickInvoiceFile}
+                      disabled={isUploadingFile}
+                      style={{
+                        paddingVertical: spacing.md,
+                        paddingHorizontal: spacing.lg,
+                        backgroundColor: colors.card,
+                        borderRadius: radius.sm,
+                        borderWidth: 1,
+                        borderColor: colors.inputBorder,
+                        alignItems: "center"
+                      }}
+                    >
+                      <Text style={{ color: colors.textMain, fontWeight: "500" }}>
+                        {isUploadingFile ? "Loading..." : invoiceFile ? "✓ File attached" : "📎 Attach receipt (optional)"}
+                      </Text>
+                    </Pressable>
+                    {invoiceFile && (
+                      <Text style={{ fontSize: typography.small, color: colors.textSecondary, marginTop: spacing.sm }}>
+                        {invoiceFile.name}
+                      </Text>
+                    )}
+                  </View>
                 </View>
 
                 <View style={{ gap: spacing.md }}>
@@ -3264,6 +3356,7 @@ export default function App(): React.JSX.Element {
                       setInvoiceAmount("");
                       setInvoiceDate("");
                       setInvoiceStatus("pending");
+                      setInvoiceFile(null);
                     }}
                     style={{
                       backgroundColor: colors.card,
