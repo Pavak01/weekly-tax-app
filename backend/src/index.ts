@@ -2606,8 +2606,8 @@ app.post("/invoices", requireAuth, async (req: Request, res: Response) => {
 
 app.post(
   "/invoices/upload",
-  requireAuth,
   uploadRateLimit,
+  requireAuth,
   upload.single("file"),
   async (req: Request, res: Response) => {
     const authReq = req as AuthenticatedRequest;
