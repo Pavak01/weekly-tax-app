@@ -12,6 +12,7 @@ import {
   Easing,
   KeyboardAvoidingView,
   Linking,
+  Modal,
   Platform,
   Pressable,
   SafeAreaView,
@@ -231,6 +232,14 @@ export default function App(): React.JSX.Element {
   const [adminTargetEmail, setAdminTargetEmail] = useState("");
   const [adminTargetRole, setAdminTargetRole] = useState<"admin" | "user">("admin");
   const [isUpdatingUserRole, setIsUpdatingUserRole] = useState(false);
+
+  const [showInvoiceModal, setShowInvoiceModal] = useState(false);
+  const [invoiceVendor, setInvoiceVendor] = useState("");
+  const [invoiceNumber, setInvoiceNumber] = useState("");
+  const [invoiceAmount, setInvoiceAmount] = useState("");
+  const [invoiceDate, setInvoiceDate] = useState("");
+  const [invoiceStatus, setInvoiceStatus] = useState("pending");
+  const [isSubmittingInvoice, setIsSubmittingInvoice] = useState(false);
 
   const contentOpacity = useRef(new Animated.Value(1)).current;
   const statusPulse = useRef(new Animated.Value(1)).current;
@@ -1586,6 +1595,9 @@ export default function App(): React.JSX.Element {
             ? `Daily entry recorded for ${effectiveDate}.`
             : "Weekly entry locked and recorded."
       );
+      if (expenses.length > 0) {
+        setShowInvoiceModal(true);
+      }
     } catch (error) {
       Alert.alert("Network error", String(error));
       setStatus({ kind: "error", text: "Network error while saving entry." });
@@ -2079,6 +2091,46 @@ export default function App(): React.JSX.Element {
       Alert.alert("Network error", String(error));
     } finally {
       setIsUpdatingUserRole(false);
+    }
+  }
+
+  async function submitInvoice(): Promise<void> {
+    if (!invoiceVendor.trim() || !invoiceAmount.trim()) {
+      Alert.alert("Validation", "Vendor name and amount are required.");
+      return;
+    }
+
+    setIsSubmittingInvoice(true);
+    try {
+      const response = await authedFetch("/invoices", {
+        method: "POST",
+        body: JSON.stringify({
+          vendor_name: invoiceVendor.trim(),
+          invoice_number: invoiceNumber.trim() || null,
+          invoice_date: invoiceDate || null,
+          amount: parseFloat(invoiceAmount),
+          payment_status: invoiceStatus,
+          currency: "GBP"
+        })
+      });
+
+      const payload = await response.json();
+      if (!response.ok) {
+        Alert.alert("Failed to save invoice", payload.error || "Could not save invoice.");
+        return;
+      }
+
+      Alert.alert("Success", "Invoice saved successfully.");
+      setInvoiceVendor("");
+      setInvoiceNumber("");
+      setInvoiceAmount("");
+      setInvoiceDate("");
+      setInvoiceStatus("pending");
+      setShowInvoiceModal(false);
+    } catch (error) {
+      Alert.alert("Network error", String(error));
+    } finally {
+      setIsSubmittingInvoice(false);
     }
   }
 
@@ -3111,6 +3163,121 @@ export default function App(): React.JSX.Element {
               )}
             </Animated.ScrollView>
           </>
+        )}
+
+        {showInvoiceModal && (
+          <Modal transparent animationType="slide">
+            <SafeAreaView style={{ flex: 1, backgroundColor: colors.canvas }}>
+              <View style={{ flex: 1, padding: spacing.lg, justifyContent: "space-between" }}>
+                <View>
+                  <Text style={{ fontSize: typography.h2, fontWeight: "600", marginBottom: spacing.lg }}>
+                    Save Invoice
+                  </Text>
+                  <Text style={{ fontSize: typography.body, color: colors.textSecondary, marginBottom: spacing.xl }}>
+                    Add invoice details for audit records
+                  </Text>
+
+                  <TextInput
+                    placeholder="Vendor Name *"
+                    value={invoiceVendor}
+                    onChangeText={setInvoiceVendor}
+                    style={{ borderBottomWidth: 1, borderColor: colors.inputBorder, paddingVertical: spacing.sm, marginBottom: spacing.lg }}
+                    placeholderTextColor={colors.textMuted}
+                  />
+
+                  <TextInput
+                    placeholder="Invoice Number"
+                    value={invoiceNumber}
+                    onChangeText={setInvoiceNumber}
+                    style={{ borderBottomWidth: 1, borderColor: colors.inputBorder, paddingVertical: spacing.sm, marginBottom: spacing.lg }}
+                    placeholderTextColor={colors.textMuted}
+                  />
+
+                  <TextInput
+                    placeholder="Amount *"
+                    value={invoiceAmount}
+                    onChangeText={setInvoiceAmount}
+                    keyboardType="decimal-pad"
+                    style={{ borderBottomWidth: 1, borderColor: colors.inputBorder, paddingVertical: spacing.sm, marginBottom: spacing.lg }}
+                    placeholderTextColor={colors.textMuted}
+                  />
+
+                  <View style={{ marginBottom: spacing.lg }}>
+                    <DateField
+                      label="Invoice Date"
+                      value={invoiceDate}
+                      onChange={setInvoiceDate}
+                      placeholder="DD-MM-YYYY"
+                    />
+                  </View>
+
+                  <View style={{ marginBottom: spacing.lg }}>
+                    <Text style={{ fontSize: typography.body, marginBottom: spacing.sm }}>Payment Status</Text>
+                    <View style={{ flexDirection: "row", gap: spacing.sm }}>
+                      {["pending", "paid", "overdue"].map(status => (
+                        <Pressable
+                          key={status}
+                          onPress={() => setInvoiceStatus(status as "pending" | "paid" | "overdue")}
+                          style={{
+                            flex: 1,
+                            paddingVertical: spacing.sm,
+                            paddingHorizontal: spacing.md,
+                            backgroundColor: invoiceStatus === status ? colors.accent : colors.card,
+                            borderRadius: radius.sm,
+                            alignItems: "center"
+                          }}
+                        >
+                          <Text style={{ color: invoiceStatus === status ? colors.accentText : colors.textMain, fontWeight: "500" }}>
+                            {status.charAt(0).toUpperCase() + status.slice(1)}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  </View>
+                </View>
+
+                <View style={{ gap: spacing.md }}>
+                  <Pressable
+                    onPress={submitInvoice}
+                    disabled={isSubmittingInvoice}
+                    style={{
+                      backgroundColor: colors.accent,
+                      paddingVertical: spacing.lg,
+                      borderRadius: radius.md,
+                      alignItems: "center"
+                    }}
+                  >
+                    <Text style={{ color: colors.accentText, fontSize: typography.body, fontWeight: "600" }}>
+                      {isSubmittingInvoice ? "Saving..." : "Save Invoice"}
+                    </Text>
+                  </Pressable>
+
+                  <Pressable
+                    onPress={() => {
+                      setShowInvoiceModal(false);
+                      setInvoiceVendor("");
+                      setInvoiceNumber("");
+                      setInvoiceAmount("");
+                      setInvoiceDate("");
+                      setInvoiceStatus("pending");
+                    }}
+                    style={{
+                      backgroundColor: colors.card,
+                      paddingVertical: spacing.lg,
+                      borderRadius: radius.md,
+                      alignItems: "center",
+                      borderWidth: 1,
+                      borderColor: colors.inputBorder
+                    }}
+                  >
+                    <Text style={{ color: colors.textMain, fontSize: typography.body, fontWeight: "600" }}>
+                      Skip for Now
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+            </SafeAreaView>
+          </Modal>
         )}
       </KeyboardAvoidingView>
     </SafeAreaView>
